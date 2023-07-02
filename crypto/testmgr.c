@@ -5428,6 +5428,24 @@ static const struct alg_test_desc alg_test_descs[] = {
 			.hash = __VECS(nhpoly1305_tv_template)
 		}
 	}, {
+		.alg = "p1363(ecdsa-nist-p192)",
+		.test = alg_test_null,
+	}, {
+		.alg = "p1363(ecdsa-nist-p256)",
+		.test = alg_test_akcipher,
+		.fips_allowed = 1,
+		.suite = {
+			.akcipher = __VECS(p1363_ecdsa_nist_p256_tv_template)
+		}
+	}, {
+		.alg = "p1363(ecdsa-nist-p384)",
+		.test = alg_test_null,
+		.fips_allowed = 1,
+	}, {
+		.alg = "p1363(ecdsa-nist-p521)",
+		.test = alg_test_null,
+		.fips_allowed = 1,
+	}, {
 		.alg = "pcbc(fcrypt)",
 		.test = alg_test_skcipher,
 		.suite = {
