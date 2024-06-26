@@ -146,8 +146,19 @@ static int pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	 * after boot with device_add:
 	 * https://stackoverflow.com/questions/44740254/how-to-handle-interrupts-from-a-pci-device-that-already-have-a-non-shareable-han?noredirect=1#comment76558680_44740254
 	 */
-	if (request_irq(dev->irq, irq_handler, IRQF_SHARED, "pci_irq_handler0", &major) < 0) {
-		dev_err(&(dev->dev), "request_irq\n");
+
+	// Required for MSI interrupts
+	pci_set_master(pdev);
+	
+	if (pci_alloc_irq_vectors(dev, 1, 1, PCI_IRQ_MSI) < 0) {
+		dev_err(&(dev->dev), "Error: pci_alloc_irq_vectors\n");
+        goto error;
+	}
+
+	dev->irq = pci_irq_vector(dev, 0);
+
+	if (request_irq(dev->irq, irq_handler, 0, "pci_irq_handler0", &major) < 0) {
+		dev_err(&(dev->dev), "Error: request_irq\n");
 		goto error;
 	}
 
@@ -241,7 +252,8 @@ error:
 static void pci_remove(struct pci_dev *dev)
 {
 	pr_info("pci_remove\n");
-	free_irq(pdev->irq, &major);
+	free_irq(pci_irq_vector(pdev, 0), &major);
+	pci_free_irq_vectors(dev);
 	pci_release_region(dev, BAR);
 	unregister_chrdev(major, CDEV_NAME);
 }
