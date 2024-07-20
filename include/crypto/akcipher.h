@@ -16,28 +16,39 @@
  *
  * @base:	Common attributes for async crypto requests
  * @src:	Source data
- *		For verify op this is signature + digest, in that case
- *		total size of @src is @src_len + @dst_len.
- * @dst:	Destination data (Should be NULL for verify op)
+ * @dst:	Destination data
  * @src_len:	Size of the input buffer
- *		For verify op it's size of signature part of @src, this part
- *		is supposed to be operated by cipher.
- * @dst_len:	Size of @dst buffer (for all ops except verify).
+ * @dst_len:	Size of @dst buffer
  *		It needs to be at least	as big as the expected result
  *		depending on the operation.
  *		After operation it will be updated with the actual size of the
  *		result.
  *		In case of error where the dst sgl size was insufficient,
  *		it will be updated to the size required for the operation.
- *		For verify op this is size of digest part in @src.
+ * @sig:	Signature
+ * @digest:	Digest
+ * @sig_len:	Size of @sig
+ * @digest_len:	Size of @digest
  * @__ctx:	Start of private context data
  */
 struct akcipher_request {
 	struct crypto_async_request base;
-	struct scatterlist *src;
-	struct scatterlist *dst;
-	unsigned int src_len;
-	unsigned int dst_len;
+	union {
+		struct {
+			/* sign, encrypt, decrypt operations */
+			struct scatterlist *src;
+			struct scatterlist *dst;
+			unsigned int src_len;
+			unsigned int dst_len;
+		};
+		struct {
+			/* verify operation */
+			const void *sig;
+			const void *digest;
+			unsigned int sig_len;
+			unsigned int digest_len;
+		};
+	};
 	void *__ctx[] CRYPTO_MINALIGN_ATTR;
 };
 
@@ -242,20 +253,18 @@ static inline void akcipher_request_set_callback(struct akcipher_request *req,
  * Sets parameters required by crypto operation
  *
  * @req:	public key request
- * @src:	ptr to input scatter list
- * @dst:	ptr to output scatter list or NULL for verify op
- * @src_len:	size of the src input scatter list to be processed
- * @dst_len:	size of the dst output scatter list or size of signature
- *		portion in @src for verify op
+ * @src:	ptr to input scatter list or signature for verify op
+ * @dst:	ptr to output scatter list or digest for verify op
+ * @src_len:	size of @src
+ * @dst_len:	size of @dst
  */
 static inline void akcipher_request_set_crypt(struct akcipher_request *req,
-					      struct scatterlist *src,
-					      struct scatterlist *dst,
+					      const void *src, const void *dst,
 					      unsigned int src_len,
 					      unsigned int dst_len)
 {
-	req->src = src;
-	req->dst = dst;
+	req->sig = src;
+	req->digest = dst;
 	req->src_len = src_len;
 	req->dst_len = dst_len;
 }
@@ -371,10 +380,6 @@ static inline int crypto_akcipher_sign(struct akcipher_request *req)
  * for a given public key algorithm.
  *
  * @req:	asymmetric key request
- *
- * Note: req->dst should be NULL, req->src should point to SG of size
- * (req->src_size + req->dst_size), containing signature (of req->src_size
- * length) with appended digest (of req->dst_size length).
  *
  * Return: zero on verification success; error code in case of error.
  */

@@ -4105,7 +4105,7 @@ static int test_akcipher_one(struct crypto_akcipher *tfm,
 	struct crypto_wait wait;
 	unsigned int out_len_max, out_len = 0;
 	int err = -ENOMEM;
-	struct scatterlist src, dst, src_tab[3];
+	struct scatterlist src, dst, src_tab[2];
 	const char *m, *c;
 	unsigned int m_size, c_size;
 	const char *op;
@@ -4169,16 +4169,16 @@ static int test_akcipher_one(struct crypto_akcipher *tfm,
 		goto free_all;
 	memcpy(xbuf[0], m, m_size);
 
-	sg_init_table(src_tab, 3);
-	sg_set_buf(&src_tab[0], xbuf[0], 8);
-	sg_set_buf(&src_tab[1], xbuf[0] + 8, m_size - 8);
 	if (vecs->siggen_sigver_test) {
 		if (WARN_ON(c_size > PAGE_SIZE))
 			goto free_all;
 		memcpy(xbuf[1], c, c_size);
-		sg_set_buf(&src_tab[2], xbuf[1], c_size);
-		akcipher_request_set_crypt(req, src_tab, NULL, m_size, c_size);
+		akcipher_request_set_crypt(req, xbuf[0], xbuf[1],
+					   m_size, c_size);
 	} else {
+		sg_init_table(src_tab, 2);
+		sg_set_buf(&src_tab[0], xbuf[0], 8);
+		sg_set_buf(&src_tab[1], xbuf[0] + 8, m_size - 8);
 		sg_init_one(&dst, outbuf_enc, out_len_max);
 		akcipher_request_set_crypt(req, src_tab, &dst, m_size,
 					   out_len_max);

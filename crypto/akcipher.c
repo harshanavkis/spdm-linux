@@ -167,10 +167,7 @@ int crypto_akcipher_sync_prep(struct crypto_akcipher_sync_data *data)
 	unsigned int len;
 	u8 *buf;
 
-	if (data->dst)
-		mlen = max(data->slen, data->dlen);
-	else
-		mlen = data->slen + data->dlen;
+	mlen = max(data->slen, data->dlen);
 
 	len = sizeof(*req) + reqsize + mlen;
 	if (len < mlen)
@@ -189,8 +186,7 @@ int crypto_akcipher_sync_prep(struct crypto_akcipher_sync_data *data)
 
 	sg = &data->sg;
 	sg_init_one(sg, buf, mlen);
-	akcipher_request_set_crypt(req, sg, data->dst ? sg : NULL,
-				   data->slen, data->dlen);
+	akcipher_request_set_crypt(req, sg, sg, data->slen, data->dlen);
 
 	crypto_init_wait(&data->cwait);
 	akcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_SLEEP,
@@ -203,8 +199,7 @@ EXPORT_SYMBOL_GPL(crypto_akcipher_sync_prep);
 int crypto_akcipher_sync_post(struct crypto_akcipher_sync_data *data, int err)
 {
 	err = crypto_wait_req(err, &data->cwait);
-	if (data->dst)
-		memcpy(data->dst, data->buf, data->dlen);
+	memcpy(data->dst, data->buf, data->dlen);
 	data->dlen = data->req->dst_len;
 	kfree_sensitive(data->req);
 	return err;
