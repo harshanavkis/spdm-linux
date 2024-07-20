@@ -9,7 +9,6 @@
 #include <crypto/akcipher.h>
 #include <crypto/ecdh.h>
 #include <linux/asn1_decoder.h>
-#include <linux/scatterlist.h>
 
 #include "ecdsasignature.asn1.h"
 
@@ -135,37 +134,23 @@ static int ecdsa_verify(struct akcipher_request *req)
 		.curve = ctx->curve,
 	};
 	u64 hash[ECC_MAX_DIGITS];
-	unsigned char *buffer;
 	int ret;
 
 	if (unlikely(!ctx->pub_key_set))
 		return -EINVAL;
 
-	buffer = kmalloc(req->src_len + req->dst_len, GFP_KERNEL);
-	if (!buffer)
-		return -ENOMEM;
-
-	sg_pcopy_to_buffer(req->src,
-		sg_nents_for_len(req->src, req->src_len + req->dst_len),
-		buffer, req->src_len + req->dst_len, 0);
-
 	ret = asn1_ber_decoder(&ecdsasignature_decoder, &sig_ctx,
-			       buffer, req->src_len);
+			       req->sig, req->sig_len);
 	if (ret < 0)
-		goto error;
+		return ret;
 
-	if (bufsize > req->dst_len)
-		bufsize = req->dst_len;
+	if (bufsize > req->digest_len)
+		bufsize = req->digest_len;
 
-	ecc_digits_from_bytes(buffer + req->src_len, bufsize,
+	ecc_digits_from_bytes(req->digest, bufsize,
 			      hash, ctx->curve->g.ndigits);
 
-	ret = _ecdsa_verify(ctx, hash, sig_ctx.r, sig_ctx.s);
-
-error:
-	kfree(buffer);
-
-	return ret;
+	return _ecdsa_verify(ctx, hash, sig_ctx.r, sig_ctx.s);
 }
 
 static int ecdsa_ecc_ctx_init(struct ecc_ctx *ctx, unsigned int curve_id)

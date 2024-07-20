@@ -23,7 +23,6 @@
 #include <crypto/internal/ecc.h>
 #include <crypto/akcipher.h>
 #include <linux/oid_registry.h>
-#include <linux/scatterlist.h>
 #include "ecrdsa_params.asn1.h"
 #include "ecrdsa_pub_key.asn1.h"
 #include "ecrdsa_defs.h"
@@ -72,8 +71,6 @@ static int ecrdsa_verify(struct akcipher_request *req)
 {
 	struct crypto_akcipher *tfm = crypto_akcipher_reqtfm(req);
 	struct ecrdsa_ctx *ctx = akcipher_tfm_ctx(tfm);
-	unsigned char sig[ECRDSA_MAX_SIG_SIZE];
-	unsigned char digest[STREEBOG512_DIGEST_SIZE];
 	unsigned int ndigits = req->dst_len / sizeof(u64);
 	u64 r[ECRDSA_MAX_DIGITS]; /* witness (r) */
 	u64 _r[ECRDSA_MAX_DIGITS]; /* -r */
@@ -91,25 +88,18 @@ static int ecrdsa_verify(struct akcipher_request *req)
 	 */
 	if (!ctx->curve ||
 	    !ctx->digest ||
-	    !req->src ||
+	    !req->sig ||
 	    !ctx->pub_key.x ||
-	    req->dst_len != ctx->digest_len ||
-	    req->dst_len != ctx->curve->g.ndigits * sizeof(u64) ||
+	    req->digest_len != ctx->digest_len ||
+	    req->digest_len != ctx->curve->g.ndigits * sizeof(u64) ||
 	    ctx->pub_key.ndigits != ctx->curve->g.ndigits ||
-	    req->dst_len * 2 != req->src_len ||
-	    WARN_ON(req->src_len > sizeof(sig)) ||
-	    WARN_ON(req->dst_len > sizeof(digest)))
+	    req->digest_len * 2 != req->sig_len ||
+	    WARN_ON(req->sig_len > ECRDSA_MAX_SIG_SIZE) ||
+	    WARN_ON(req->digest_len > STREEBOG512_DIGEST_SIZE))
 		return -EBADMSG;
 
-	sg_copy_to_buffer(req->src, sg_nents_for_len(req->src, req->src_len),
-			  sig, req->src_len);
-	sg_pcopy_to_buffer(req->src,
-			   sg_nents_for_len(req->src,
-					    req->src_len + req->dst_len),
-			   digest, req->dst_len, req->src_len);
-
-	vli_from_be64(s, sig, ndigits);
-	vli_from_be64(r, sig + ndigits * sizeof(u64), ndigits);
+	vli_from_be64(s, req->sig, ndigits);
+	vli_from_be64(r, req->sig + ndigits * sizeof(u64), ndigits);
 
 	/* Step 1: verify that 0 < r < q, 0 < s < q */
 	if (vli_is_zero(r, ndigits) ||
@@ -120,7 +110,7 @@ static int ecrdsa_verify(struct akcipher_request *req)
 
 	/* Step 2: calculate hash (h) of the message (passed as input) */
 	/* Step 3: calculate e = h \mod q */
-	vli_from_le64(e, digest, ndigits);
+	vli_from_le64(e, req->digest, ndigits);
 	if (vli_cmp(e, ctx->curve->n, ndigits) >= 0)
 		vli_sub(e, e, ctx->curve->n, ndigits);
 	if (vli_is_zero(e, ndigits))

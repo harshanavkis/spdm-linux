@@ -98,22 +98,22 @@ int crypto_sig_verify(struct crypto_sig *tfm,
 		      const void *digest, unsigned int dlen)
 {
 	struct crypto_akcipher **ctx = crypto_sig_ctx(tfm);
-	struct crypto_akcipher_sync_data data = {
-		.tfm = *ctx,
-		.src = src,
-		.slen = slen,
-		.dlen = dlen,
-	};
+	struct crypto_akcipher *child_tfm = *ctx;
+	struct akcipher_request *req;
 	int err;
 
-	err = crypto_akcipher_sync_prep(&data);
-	if (err)
-		return err;
+	req = kzalloc(sizeof(*req) + crypto_akcipher_reqsize(child_tfm),
+		      GFP_KERNEL);
+	if (!req)
+		return -ENOMEM;
 
-	memcpy(data.buf + slen, digest, dlen);
+	akcipher_request_set_tfm(req, child_tfm);
+	akcipher_request_set_crypt(req, src, digest, slen, dlen);
 
-	return crypto_akcipher_sync_post(&data,
-					 crypto_akcipher_verify(data.req));
+	err = crypto_akcipher_verify(req);
+
+	kfree_sensitive(req);
+	return err;
 }
 EXPORT_SYMBOL_GPL(crypto_sig_verify);
 
