@@ -10,15 +10,27 @@
 #define VMADDR_PORT 31337
 #define SERVER_CID 2 // Change to the actual CID of the server
 #define BUF_SIZE 1024
+#define OP_READ 1
+#define OP_WRITE 2
 
 static struct task_struct *vsock_client_thread;
 
+struct guest_message_header
+{
+    uint8_t operation; /**< Operation type (OP_READ or OP_WRITE) */
+    uint64_t address;  /**< Memory address for the operation */
+    uint32_t length;   /**< Length of data to read or write */
+};
+
 static int vsock_client_fn(void *data) {
     struct socket *client_sock = NULL;
-    char buffer[BUF_SIZE];
+    // char buffer[BUF_SIZE];
     struct sockaddr_vm sa_server = {0};
     int ret;
     const char *message = "Hello from VSOCK client\n";
+    struct guest_message_header dev_access_header = {0};
+    dev_access_header.operation = OP_WRITE;
+    dev_access_header.length = strlen(message);
     struct msghdr msg = {0};
     struct kvec iov;
 
@@ -42,30 +54,65 @@ static int vsock_client_fn(void *data) {
     pr_info("Connected to server on port %d\n", VMADDR_PORT);
 
     while (!kthread_should_stop()) {
-        iov.iov_base = (void *)message;
-        iov.iov_len = strlen(message);
+        iov.iov_base = &dev_access_header;
+        iov.iov_len = sizeof(struct guest_message_header);
 
-        ret = kernel_sendmsg(client_sock, &msg, &iov, 1, strlen(message));
+        ret = kernel_sendmsg(client_sock, &msg, &iov, 1, iov.iov_len);
         if (ret < 0) {
 	    // TODO: Handle cases when server disconnects
             pr_err("Failed to send message to vsock server\n");
         } else {
-            pr_info("Message sent to server: %s\n", message);
+            pr_info("Message sent to server: %u\n", dev_access_header.operation);
         }
 
-        // Receive back the message
-        iov.iov_base = buffer;
-        iov.iov_len = BUF_SIZE;
-        ret = kernel_recvmsg(client_sock, &msg, &iov, 1, BUF_SIZE, 0);
-        if (ret < 0) {
-            pr_err("Failed to receive message on vsock client socket\n");
-            break;
-        } else if (ret == 0) {
-            pr_info("Client disconnected\n");
-            break;
+        // If OP_WRITE send data as well
+        if (dev_access_header.operation == OP_WRITE)
+        {
+            iov.iov_base = (void *)message;
+            iov.iov_len = strlen(message);
+            ret = kernel_sendmsg(client_sock, &msg, &iov, 1, iov.iov_len);
+            if (ret < 0) {
+            // TODO: Handle cases when server disconnects
+                pr_err("Failed to send data to vsock server\n");
+            } else {
+                pr_info("Data sent to server: %u\n", dev_access_header.operation);
+            }
         } else {
-            buffer[ret] = '\0';
-            pr_info("Received message: %s\n", buffer);
+            // OP_READ
+            char *read_data_buffer = kmalloc(dev_access_header.length, GFP_KERNEL);
+
+            if (!read_data_buffer) 
+            {
+                pr_err("kmalloc failed to allocate memory\n");
+                return -ENOMEM; // Return an error code indicating out of memory
+            }
+
+            iov.iov_base = (void *) read_data_buffer;
+            iov.iov_len = dev_access_header.length;
+
+            ret = kernel_recvmsg(client_sock, &msg, &iov, 1, iov.iov_len, 0);
+
+            if (ret < 0) {
+                pr_err("Failed to receive message on vsock client socket\n");
+                break;
+            } else if (ret == 0) {
+                pr_info("Client disconnected\n");
+                break;
+            } else {
+                read_data_buffer[ret] = '\0';
+                pr_info("Received message: %s\n", read_data_buffer);
+            }
+
+            kfree(read_data_buffer);
+        }
+
+        dev_access_header.address += 1;
+
+        if (dev_access_header.operation == OP_WRITE)
+        {
+            dev_access_header.operation = OP_READ;
+        } else {
+            dev_access_header.operation = OP_WRITE;
         }
 
         ssleep(5); // Send message every 10 seconds
