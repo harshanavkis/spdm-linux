@@ -15,6 +15,7 @@ static struct task_struct *vsock_client_thread;
 
 static int vsock_client_fn(void *data) {
     struct socket *client_sock = NULL;
+    char buffer[BUF_SIZE];
     struct sockaddr_vm sa_server = {0};
     int ret;
     const char *message = "Hello from VSOCK client\n";
@@ -50,6 +51,21 @@ static int vsock_client_fn(void *data) {
             pr_err("Failed to send message to vsock server\n");
         } else {
             pr_info("Message sent to server: %s\n", message);
+        }
+
+        // Receive back the message
+        iov.iov_base = buffer;
+        iov.iov_len = BUF_SIZE;
+        ret = kernel_recvmsg(client_sock, &msg, &iov, 1, BUF_SIZE, 0);
+        if (ret < 0) {
+            pr_err("Failed to receive message on vsock client socket\n");
+            break;
+        } else if (ret == 0) {
+            pr_info("Client disconnected\n");
+            break;
+        } else {
+            buffer[ret] = '\0';
+            pr_info("Received message: %s\n", buffer);
         }
 
         ssleep(5); // Send message every 10 seconds
