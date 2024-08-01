@@ -29,10 +29,14 @@ static int vsock_client_fn(void *data) {
     int ret;
     const char *message = "Hello from VSOCK client\n";
     struct guest_message_header dev_access_header = {0};
-    dev_access_header.operation = OP_WRITE;
-    dev_access_header.length = strlen(message);
+    // dev_access_header.operation = OP_WRITE;
+    // dev_access_header.length = strlen(message);
     struct msghdr msg = {0};
     struct kvec iov;
+
+    dev_access_header.operation = OP_READ;
+    dev_access_header.address = 0xfea00000;
+    dev_access_header.length = 4;
 
     ret = sock_create_kern(&init_net, AF_VSOCK, SOCK_STREAM, 0, &client_sock);
     if (ret < 0) {
@@ -81,7 +85,7 @@ static int vsock_client_fn(void *data) {
             // OP_READ
             char *read_data_buffer = kmalloc(dev_access_header.length, GFP_KERNEL);
 
-            if (!read_data_buffer) 
+            if (!read_data_buffer)
             {
                 pr_err("kmalloc failed to allocate memory\n");
                 return -ENOMEM; // Return an error code indicating out of memory
@@ -99,21 +103,27 @@ static int vsock_client_fn(void *data) {
                 pr_info("Client disconnected\n");
                 break;
             } else {
-                read_data_buffer[ret] = '\0';
-                pr_info("Received message: %s\n", read_data_buffer);
+                // read_data_buffer[ret] = '\0';
+                // pr_info("Received message: %s\n", read_data_buffer);
+                pr_info("Received message: ");
+                for (uint32_t i = 0; i < dev_access_header.length; i++)
+                {
+                    pr_info("%02X", ((uint8_t *)read_data_buffer)[i]);
+                }
+                pr_info("\n");
             }
 
             kfree(read_data_buffer);
         }
 
-        dev_access_header.address += 1;
+        // dev_access_header.address += 1;
 
-        if (dev_access_header.operation == OP_WRITE)
-        {
-            dev_access_header.operation = OP_READ;
-        } else {
-            dev_access_header.operation = OP_WRITE;
-        }
+        // if (dev_access_header.operation == OP_WRITE)
+        // {
+        //     dev_access_header.operation = OP_READ;
+        // } else {
+        //     dev_access_header.operation = OP_WRITE;
+        // }
 
         ssleep(5); // Send message every 10 seconds
     }
