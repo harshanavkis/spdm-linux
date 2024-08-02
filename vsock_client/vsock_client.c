@@ -27,16 +27,21 @@ static int vsock_client_fn(void *data) {
     // char buffer[BUF_SIZE];
     struct sockaddr_vm sa_server = {0};
     int ret;
-    const char *message = "Hello from VSOCK client\n";
+    // const char *message = "Hello from VSOCK client\n";
     struct guest_message_header dev_access_header = {0};
     // dev_access_header.operation = OP_WRITE;
     // dev_access_header.length = strlen(message);
     struct msghdr msg = {0};
     struct kvec iov;
 
-    dev_access_header.operation = OP_READ;
-    dev_access_header.address = 0xfea00000;
+    // dev_access_header.operation = OP_READ;
+    // dev_access_header.address = 0xfea00000;
+    // dev_access_header.length = 4;
+
+    dev_access_header.operation = OP_WRITE;
+    dev_access_header.address = 0xfea00004;
     dev_access_header.length = 4;
+    char write_data_buffer[] = { 0x00, 0x00, 0x00, 0x00 };
 
     ret = sock_create_kern(&init_net, AF_VSOCK, SOCK_STREAM, 0, &client_sock);
     if (ret < 0) {
@@ -72,8 +77,8 @@ static int vsock_client_fn(void *data) {
         // If OP_WRITE send data as well
         if (dev_access_header.operation == OP_WRITE)
         {
-            iov.iov_base = (void *)message;
-            iov.iov_len = strlen(message);
+            iov.iov_base = (void *)write_data_buffer;
+            iov.iov_len = dev_access_header.length;
             ret = kernel_sendmsg(client_sock, &msg, &iov, 1, iov.iov_len);
             if (ret < 0) {
             // TODO: Handle cases when server disconnects
@@ -81,6 +86,41 @@ static int vsock_client_fn(void *data) {
             } else {
                 pr_info("Data sent to server: %u\n", dev_access_header.operation);
             }
+
+            // Send read request to device
+            dev_access_header.operation = OP_READ;
+            iov.iov_base = &dev_access_header;
+            iov.iov_len = sizeof(struct guest_message_header);
+
+            ret = kernel_sendmsg(client_sock, &msg, &iov, 1, iov.iov_len);
+            if (ret < 0) {
+            // TODO: Handle cases when server disconnects
+                pr_err("Failed to send message to vsock server\n");
+            } else {
+                pr_info("Message sent to server: %u\n", dev_access_header.operation);
+            }
+
+            // Check for inversion by EDU device
+            iov.iov_base = (void *)write_data_buffer;
+            iov.iov_len = dev_access_header.length;
+            ret = kernel_recvmsg(client_sock, &msg, &iov, 1, iov.iov_len, 0);
+            if (ret < 0) {
+                pr_err("Failed to receive message on vsock client socket\n");
+                break;
+            } else if (ret == 0) {
+                pr_info("Client disconnected\n");
+                break;
+            } else {
+                pr_info("Received message: ");
+                for (uint32_t i = 0; i < dev_access_header.length; i++)
+                {
+                    pr_info("%02X", ((uint8_t *)write_data_buffer)[i]);
+                }
+                pr_info("\n");
+            }
+
+            // Change back to write
+            dev_access_header.operation = OP_WRITE;
         } else {
             // OP_READ
             char *read_data_buffer = kmalloc(dev_access_header.length, GFP_KERNEL);
