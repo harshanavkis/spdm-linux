@@ -310,6 +310,10 @@ __ioremap_caller(resource_size_t phys_addr, unsigned long size,
 	 */
 	if (iomem_map_sanity_check(unaligned_phys_addr, unaligned_size))
 		pr_warn("caller %pS mapping multiple BARs\n", caller);
+	
+	uint8_t disagg_device_flags = this_cpu_read(ioremap_disagg_device_flags);
+	pr_info("__ioremap_caller: disagg device flag is: %u", disagg_device_flags);
+	this_cpu_write(ioremap_disagg_device_flags, 0);
 
 	return ret_addr;
 err_free_area:

@@ -14,6 +14,10 @@
 #include <asm/io.h>
 #include <asm/page.h>
 
+#include <linux/percpu.h>
+
+DECLARE_PER_CPU(uint8_t, ioremap_disagg_device_flags);
+
 struct device;
 struct resource;
 

@@ -9,6 +9,8 @@
 
 #include <linux/export.h>
 
+DEFINE_PER_CPU(uint8_t, ioremap_disagg_device_flags) = 0;
+
 /**
  * pci_iomap_range - create a virtual mapping cookie for a PCI BAR
  * @dev: PCI device that owns the BAR
@@ -36,6 +38,19 @@ void __iomem *pci_iomap_range(struct pci_dev *dev,
 	resource_size_t start = pci_resource_start(dev, bar);
 	resource_size_t len = pci_resource_len(dev, bar);
 	unsigned long flags = pci_resource_flags(dev, bar);
+	uint8_t disagg_device_flags = 0;
+
+	/*
+	 * TODO: Make this more generic for example via kernel command line parameters
+	 * Currently it is very specific to the QEMU EDU device
+	*/
+	if ((dev->vendor == 0x1234) && (dev->device == 0x11e8))
+	{
+		pr_info("pci_iomap_range: Found QEMU EDU device\n");
+		disagg_device_flags = 1;
+	}
+
+	this_cpu_write(ioremap_disagg_device_flags, disagg_device_flags);
 
 	if (len <= offset || !start)
 		return NULL;
