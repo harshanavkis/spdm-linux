@@ -167,6 +167,50 @@ static void __ioremap_check_mem(resource_size_t addr, unsigned long size,
 }
 
 /*
+ * Mark pages between addr and addr + size as not present
+*/
+void disagg_dev_mark_page_not_present(unsigned long start_addr, size_t size)
+{
+	unsigned long addr, end_addr;
+    pte_t *pte;
+    unsigned int level;
+
+    start_addr = PAGE_ALIGN(start_addr);
+    end_addr = PAGE_ALIGN(start_addr + size);
+
+    for (addr = start_addr; addr < end_addr; ) {
+        pte = lookup_address(addr, &level);
+        if (!pte) {
+            pr_err("Failed to find PTE for address 0x%lx\n", addr);
+            addr += PAGE_SIZE;
+            continue;
+        }
+
+        if (level == PG_LEVEL_4K) {
+            if (!pte_none(*pte)) {
+                pte_clear(&init_mm, addr, pte);
+                pr_info("Marked 4K page at 0x%lx as not present\n", addr);
+                flush_tlb_one_kernel(addr);
+            }
+            addr += PAGE_SIZE;
+        } 
+        else if (level == PG_LEVEL_2M) {
+            pmd_t *pmd = (pmd_t *)pte;
+            if (!pmd_none(*pmd)) {
+                pmd_clear(pmd);
+                pr_info("Marked 2M page at 0x%lx as not present\n", addr);
+                flush_tlb_kernel_range(addr, addr + PMD_SIZE);
+            }
+            addr += PMD_SIZE;
+        }
+        else {
+            pr_err("Unsupported page size for address 0x%lx (level %d)\n", addr, level);
+            addr += PAGE_SIZE;
+        }
+    }
+}
+
+/*
  * Remap an arbitrary physical address space into the kernel virtual
  * address space. It transparently creates kernel huge I/O mapping when
  * the physical address is aligned by a huge page size (1GB or 2MB) and
@@ -312,7 +356,12 @@ __ioremap_caller(resource_size_t phys_addr, unsigned long size,
 		pr_warn("caller %pS mapping multiple BARs\n", caller);
 	
 	uint8_t disagg_device_flags = this_cpu_read(ioremap_disagg_device_flags);
-	pr_info("__ioremap_caller: disagg device flag is: %u", disagg_device_flags);
+	pr_info("__ioremap_caller: disagg device flag is: %u\n", disagg_device_flags);
+
+	if (disagg_device_flags)
+	{
+		disagg_dev_mark_page_not_present((unsigned long) ret_addr, size);
+	}
 	this_cpu_write(ioremap_disagg_device_flags, 0);
 
 	return ret_addr;
