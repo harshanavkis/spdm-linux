@@ -166,6 +166,51 @@ static void __ioremap_check_mem(resource_size_t addr, unsigned long size,
 	__ioremap_check_other(addr, desc);
 }
 
+struct disagg_dev_ioremap_lookup disagg_ioremap_lookup;
+
+// Initialization function
+static int __init disagg_ioremap_lookup_init(void)
+{
+    disagg_ioremap_lookup.root = RB_ROOT;
+    spin_lock_init(&disagg_ioremap_lookup.lock);
+    return 0;
+}
+core_initcall(disagg_ioremap_lookup_init);
+
+void disagg_register_ioremap(unsigned long virt_addr, phys_addr_t phys_addr, size_t size)
+{
+    struct disagg_dev_ioremap_entry *entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+    if (!entry)
+        return;
+
+    entry->virt_addr = virt_addr;
+    entry->phys_addr = phys_addr;
+    entry->size = size;
+
+    spin_lock(&disagg_ioremap_lookup.lock);
+    
+    struct rb_node **new = &disagg_ioremap_lookup.root.rb_node, *parent = NULL;
+    while (*new) {
+        struct disagg_dev_ioremap_entry *this = rb_entry(*new, struct disagg_dev_ioremap_entry, node);
+        parent = *new;
+        
+        if (virt_addr < this->virt_addr)
+            new = &((*new)->rb_left);
+        else if (virt_addr >= this->virt_addr + this->size)
+            new = &((*new)->rb_right);
+        else {
+            spin_unlock(&disagg_ioremap_lookup.lock);
+            kfree(entry);
+            return; // Overlapping region, don't insert
+        }
+    }
+
+    rb_link_node(&entry->node, parent, new);
+    rb_insert_color(&entry->node, &disagg_ioremap_lookup.root);
+    
+    spin_unlock(&disagg_ioremap_lookup.lock);
+}
+
 disagg_dev_mmio_tracker disagg_mmio_tracker;
 
 // Initialize the tracker
@@ -395,6 +440,7 @@ __ioremap_caller(resource_size_t phys_addr, unsigned long size,
 	if (disagg_device_flags)
 	{
 		add_disagg_dev_mmio_range((unsigned long)ret_addr, (unsigned long)ret_addr + size - 1);
+		disagg_register_ioremap((unsigned long) ret_addr, phys_addr, size);
 		disagg_dev_mark_page_not_present((unsigned long) ret_addr, size);
 	}
 	this_cpu_write(ioremap_disagg_device_flags, 0);
