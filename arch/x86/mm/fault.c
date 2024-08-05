@@ -38,6 +38,8 @@
 #include <asm/fred.h>
 #include <asm/sev.h>			/* snp_dump_hva_rmpentry()	*/
 
+#include <asm/insn-eval.h>
+
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
 
@@ -1465,6 +1467,118 @@ trace_page_fault_entries(struct pt_regs *regs, unsigned long error_code,
 		trace_page_fault_kernel(address, regs, error_code);
 }
 
+bool is_tracked_mmio(unsigned long addr)
+{
+    struct rb_node *node;
+    bool ret = false;
+
+    spin_lock(&disagg_mmio_tracker.lock);
+    node = disagg_mmio_tracker.root.rb_node;
+
+    while (node) {
+        disagg_dev_mmio_range *range = rb_entry(node, disagg_dev_mmio_range, node);
+
+        if (addr < range->start)
+            node = node->rb_left;
+        else if (addr > range->end)
+            node = node->rb_right;
+        else {
+            ret = true;
+            break;
+        }
+    }
+
+    spin_unlock(&disagg_mmio_tracker.lock);
+    return ret;
+}
+
+static bool mmio_read(int size, unsigned long addr, unsigned long *val)
+{
+	memset(val, 0xAF, sizeof(unsigned long));
+
+	return true;
+}
+
+static void
+disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, unsigned long address)
+{
+	pr_info("handle_page_fault: Caused by EDU disagg dev: %lu\n", address);
+
+	unsigned long *reg, val;
+	char buffer[MAX_INSN_SIZE];
+	enum insn_mmio_type mmio;
+	struct insn insn = {};
+	int size, extend_size;
+	u8 extend_val = 0;
+
+	if (copy_from_kernel_nofault(buffer, (void *)regs->ip, MAX_INSN_SIZE))
+		pr_info("disagg_mmio_fault_handler: -EFAULT\n");
+		// return -EFAULT;
+
+	if (insn_decode(&insn, buffer, MAX_INSN_SIZE, INSN_MODE_64))
+		pr_info("disagg_mmio_fault_handler: -EINVAL\n");
+		// return -EINVAL;
+
+	mmio = insn_decode_mmio(&insn, &size);
+
+	if (WARN_ON_ONCE(mmio == INSN_MMIO_DECODE_FAILED))
+		pr_info("disagg_mmio_fault_handler: insn_decode_mmio: -EINVAL\n");
+
+	if (mmio != INSN_MMIO_WRITE_IMM && mmio != INSN_MMIO_MOVS) {
+		reg = insn_get_modrm_reg_ptr(&insn, regs);
+		if (!reg)
+			pr_info("disagg_mmio_fault_handler: insn_get_modrm_reg_ptr: -EINVAL\n");
+	}
+
+	switch (mmio) {
+	case INSN_MMIO_READ:
+	case INSN_MMIO_READ_ZERO_EXTEND:
+	case INSN_MMIO_READ_SIGN_EXTEND:
+		/* Reads are handled below */
+		break;
+	default:
+		WARN_ONCE(1, "Unknown insn_decode_mmio() decode value?");
+		pr_info("disagg_mmio_fault_handler switch mmio: -EINVAL\n");
+		return;
+		// return -EINVAL;
+	}
+
+	if (!mmio_read(size, address, &val))
+		pr_info("disagg_mmio_fault_handler mmio_read: -EIO\n");
+
+	switch (mmio) {
+	case INSN_MMIO_READ:
+		/* Zero-extend for 32-bit operation */
+		extend_size = size == 4 ? sizeof(*reg) : 0;
+		break;
+	case INSN_MMIO_READ_ZERO_EXTEND:
+		/* Zero extend based on operand size */
+		extend_size = insn.opnd_bytes;
+		break;
+	case INSN_MMIO_READ_SIGN_EXTEND:
+		/* Sign extend based on operand size */
+		extend_size = insn.opnd_bytes;
+		if (size == 1 && val & BIT(7))
+			extend_val = 0xFF;
+		else if (size > 1 && val & BIT(15))
+			extend_val = 0xFF;
+		break;
+	default:
+		/* All other cases has to be covered with the first switch() */
+		WARN_ON_ONCE(1);
+		pr_info("disagg_mmio_fault_handler extend reads: -EINVAL\n");
+	}
+
+	if (extend_size)
+	{
+		pr_info("disagg_mmio_fault_handler extend_size\n");
+		memset(reg, extend_val, extend_size);
+	}
+	memcpy(reg, &val, size);
+	
+	regs->ip += insn.length;
+}
+
 static __always_inline void
 handle_page_fault(struct pt_regs *regs, unsigned long error_code,
 			      unsigned long address)
@@ -1473,6 +1587,12 @@ handle_page_fault(struct pt_regs *regs, unsigned long error_code,
 
 	if (unlikely(kmmio_fault(regs, address)))
 		return;
+	
+	if (unlikely(is_tracked_mmio(address)))
+	{
+		disagg_mmio_fault_handler(regs, error_code, address);
+		return;
+	}
 
 	/* Was the fault on kernel-controlled part of the address space? */
 	if (unlikely(fault_in_kernel_space(address))) {

@@ -15,9 +15,13 @@
 #include <asm/page.h>
 
 #include <linux/percpu.h>
+#include <linux/mm.h>
 
 DECLARE_PER_CPU(uint8_t, ioremap_disagg_device_flags);
 void disagg_dev_mark_page_not_present(unsigned long start_addr, size_t size);
+
+void init_disagg_dev_mmio_tracker(void);
+int add_disagg_dev_mmio_range(unsigned long start, unsigned long end);
 
 struct device;
 struct resource;

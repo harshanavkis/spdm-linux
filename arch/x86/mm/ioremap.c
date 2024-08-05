@@ -166,6 +166,40 @@ static void __ioremap_check_mem(resource_size_t addr, unsigned long size,
 	__ioremap_check_other(addr, desc);
 }
 
+disagg_dev_mmio_tracker disagg_mmio_tracker;
+
+// Initialize the tracker
+void init_disagg_dev_mmio_tracker(void)
+{
+    disagg_mmio_tracker.root = RB_ROOT;
+    spin_lock_init(&disagg_mmio_tracker.lock);
+}
+
+static int __init disagg_mmio_tracker_init(void)
+{
+    init_disagg_dev_mmio_tracker();
+    return 0;
+}
+core_initcall(disagg_mmio_tracker_init);
+
+// Add a range to the tracker
+int add_disagg_dev_mmio_range(unsigned long start, unsigned long end)
+{
+    struct disagg_dev_mmio_range *range = kmalloc(sizeof(disagg_dev_mmio_range), GFP_KERNEL);
+    if (!range)
+        return -ENOMEM;
+
+    range->start = start;
+    range->end = end;
+
+    spin_lock(&disagg_mmio_tracker.lock);
+    rb_link_node(&range->node, NULL, &disagg_mmio_tracker.root.rb_node);
+    rb_insert_color(&range->node, &disagg_mmio_tracker.root);
+    spin_unlock(&disagg_mmio_tracker.lock);
+
+    return 0;
+}
+
 /*
  * Mark pages between addr and addr + size as not present
 */
@@ -360,6 +394,7 @@ __ioremap_caller(resource_size_t phys_addr, unsigned long size,
 
 	if (disagg_device_flags)
 	{
+		add_disagg_dev_mmio_range((unsigned long)ret_addr, (unsigned long)ret_addr + size - 1);
 		disagg_dev_mark_page_not_present((unsigned long) ret_addr, size);
 	}
 	this_cpu_write(ioremap_disagg_device_flags, 0);

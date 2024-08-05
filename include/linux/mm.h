@@ -32,6 +32,27 @@
 #include <linux/memremap.h>
 #include <linux/slab.h>
 
+#include <linux/rbtree.h>
+
+/*
+ * Remote device MMIO tracking structures
+*/
+typedef struct disagg_dev_mmio_tracker {
+    struct rb_root root;
+    spinlock_t lock;
+} disagg_dev_mmio_tracker;
+
+typedef struct disagg_dev_mmio_range {
+    struct rb_node node;
+    unsigned long start;
+    unsigned long end;
+} disagg_dev_mmio_range;
+
+extern disagg_dev_mmio_tracker disagg_mmio_tracker;
+
+bool is_tracked_mmio(unsigned long addr);
+/****************************************/
+
 struct mempolicy;
 struct anon_vma;
 struct anon_vma_chain;
