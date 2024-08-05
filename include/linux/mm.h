@@ -51,6 +51,13 @@ typedef struct disagg_dev_mmio_range {
 extern disagg_dev_mmio_tracker disagg_mmio_tracker;
 
 bool is_tracked_mmio(unsigned long addr);
+
+struct guest_message_header
+{
+    uint8_t operation; /**< Operation type (OP_READ or OP_WRITE) */
+    uint64_t address;  /**< Memory address for the operation */
+    uint32_t length;   /**< Length of data to read or write */
+};
 /****************************************/
 
 struct mempolicy;

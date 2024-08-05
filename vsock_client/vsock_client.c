@@ -7,6 +7,8 @@
 #include <linux/net.h>
 #include <net/sock.h>
 
+#include <linux/mm.h>
+
 #define VMADDR_PORT 31337
 #define SERVER_CID 2 // Change to the actual CID of the server
 #define BUF_SIZE 1024
@@ -14,13 +16,6 @@
 #define OP_WRITE 2
 
 static struct task_struct *vsock_client_thread;
-
-struct guest_message_header
-{
-    uint8_t operation; /**< Operation type (OP_READ or OP_WRITE) */
-    uint64_t address;  /**< Memory address for the operation */
-    uint32_t length;   /**< Length of data to read or write */
-};
 
 static int vsock_client_fn(void *data) {
     struct socket *client_sock = NULL;
