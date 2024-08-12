@@ -1818,6 +1818,8 @@ static int vsock_connectible_getsockopt(struct socket *sock,
 static int vsock_connectible_sendmsg(struct socket *sock, struct msghdr *msg,
 				     size_t len)
 {
+	pr_info("vsock: af_vsock.c: vsock_connectible_sendmsg: %lu\n", sock->flags);
+	pr_info("vsock: af_vsock.c: vsock_connectible_sendmsg: %d\n", msg->msg_namelen);
 	struct sock *sk;
 	struct vsock_sock *vsk;
 	const struct vsock_transport *transport;
@@ -1939,9 +1941,11 @@ static int vsock_connectible_sendmsg(struct socket *sock, struct msghdr *msg,
 		 */
 
 		if (sk->sk_type == SOCK_SEQPACKET) {
+			pr_info("vsock: af_vsock.c: SOCK_SEQPACKET\n");
 			written = transport->seqpacket_enqueue(vsk,
 						msg, len - total_written);
 		} else {
+			pr_info("vsock: af_vsock.c: SOCK_STREAM\n");
 			written = transport->stream_enqueue(vsk,
 					msg, len - total_written);
 		}
@@ -1972,7 +1976,8 @@ out_err:
 out:
 	if (sk->sk_type == SOCK_STREAM)
 		err = sk_stream_error(sk, msg->msg_flags, err);
-
+	
+	pr_info("vsock: af_vsock.c: Releasing vsock\n");
 	release_sock(sk);
 	return err;
 }
@@ -2177,6 +2182,7 @@ int
 vsock_connectible_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 			  int flags)
 {
+	pr_info("vsock: af_vsock.c: vsock_connectible_recvmsg\n");
 	struct sock *sk;
 	struct vsock_sock *vsk;
 	const struct vsock_transport *transport;

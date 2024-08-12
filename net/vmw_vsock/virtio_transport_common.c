@@ -1078,6 +1078,8 @@ virtio_transport_stream_enqueue(struct vsock_sock *vsk,
 		.vsk = vsk,
 	};
 
+	pr_info("virtio_transport_stream_enqueue\n");
+
 	return virtio_transport_send_pkt_info(vsk, &info);
 }
 EXPORT_SYMBOL_GPL(virtio_transport_stream_enqueue);

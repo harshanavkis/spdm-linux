@@ -94,9 +94,103 @@ out_rcu:
 	return ret;
 }
 
+/* Is there space left for replies to rx packets? */
+static bool virtio_transport_more_replies(struct virtio_vsock *vsock)
+{
+	struct virtqueue *vq = vsock->vqs[VSOCK_VQ_RX];
+	int val;
+
+	smp_rmb(); /* paired with atomic_inc() and atomic_dec_return() */
+	val = atomic_read(&vsock->queued_replies);
+
+	return val < virtqueue_get_vring_size(vq);
+}
+
+static void virtio_vsock_rx_fill(struct virtio_vsock *vsock)
+{
+	int total_len = VIRTIO_VSOCK_DEFAULT_RX_BUF_SIZE + VIRTIO_VSOCK_SKB_HEADROOM;
+	struct scatterlist pkt, *p;
+	struct virtqueue *vq;
+	struct sk_buff *skb;
+	int ret;
+
+	vq = vsock->vqs[VSOCK_VQ_RX];
+
+	do {
+		skb = virtio_vsock_alloc_skb(total_len, GFP_KERNEL);
+		if (!skb)
+			break;
+
+		memset(skb->head, 0, VIRTIO_VSOCK_SKB_HEADROOM);
+		sg_init_one(&pkt, virtio_vsock_hdr(skb), total_len);
+		p = &pkt;
+		ret = virtqueue_add_sgs(vq, &p, 0, 1, skb, GFP_KERNEL);
+		if (ret < 0) {
+			kfree_skb(skb);
+			break;
+		}
+
+		vsock->rx_buf_nr++;
+	} while (vq->num_free);
+	if (vsock->rx_buf_nr > vsock->rx_buf_max_nr)
+		vsock->rx_buf_max_nr = vsock->rx_buf_nr;
+	virtqueue_kick(vq);
+}
+
+static void virtio_transport_rx_blocking(struct virtio_vsock *vsock)
+{
+	struct virtqueue *vq;
+
+	vq = vsock->vqs[VSOCK_VQ_RX];
+
+	mutex_lock(&vsock->rx_lock);
+
+	if (!vsock->rx_run)
+		goto out;
+
+	do {
+		virtqueue_disable_cb(vq);
+		for (;;) {
+			struct sk_buff *skb;
+			unsigned int len;
+
+			if (!virtio_transport_more_replies(vsock)) {
+				/* Stop rx until the device processes already
+				 * pending replies.  Leave rx virtqueue
+				 * callbacks disabled.
+				 */
+				goto out;
+			}
+
+			skb = virtqueue_get_buf(vq, &len);
+			if (!skb)
+				break;
+
+			vsock->rx_buf_nr--;
+
+			/* Drop short/long packets */
+			if (unlikely(len < sizeof(struct virtio_vsock_hdr) ||
+				     len > virtio_vsock_skb_len(skb))) {
+				kfree_skb(skb);
+				continue;
+			}
+
+			virtio_vsock_skb_rx_put(skb);
+			virtio_transport_deliver_tap_pkt(skb);
+			virtio_transport_recv_pkt(&virtio_transport, skb);
+		}
+	} while (!virtqueue_enable_cb(vq));
+
+out:
+	if (vsock->rx_buf_nr < vsock->rx_buf_max_nr / 2)
+		virtio_vsock_rx_fill(vsock);
+	mutex_unlock(&vsock->rx_lock);
+}
+
 static void
 virtio_transport_send_pkt_work(struct work_struct *work)
 {
+	pr_info("vsock: virtio_transport.c: virtio_transport_send_pkt_work\n");
 	struct virtio_vsock *vsock =
 		container_of(work, struct virtio_vsock, send_pkt_work);
 	struct virtqueue *vq;
@@ -192,12 +286,120 @@ out:
 	mutex_unlock(&vsock->tx_lock);
 
 	if (restart_rx)
-		queue_work(virtio_vsock_workqueue, &vsock->rx_work);
+	{
+		virtio_transport_rx_blocking(vsock);
+		// queue_work(virtio_vsock_workqueue, &vsock->rx_work);
+	}
 }
+
+static void
+virtio_transport_send_pkt_blocking(struct virtio_vsock *vsock)
+{
+	pr_info("vsock: virtio_transport.c: virtio_transport_send_pkt_blocking\n");
+
+	struct virtqueue *vq;
+	bool added = false;
+	bool restart_rx = false;
+
+	mutex_lock(&vsock->tx_lock);
+
+	if (!vsock->tx_run)
+		goto out;
+
+	vq = vsock->vqs[VSOCK_VQ_TX];
+
+	for (;;) {
+		int ret, in_sg = 0, out_sg = 0;
+		struct scatterlist **sgs;
+		struct sk_buff *skb;
+		bool reply;
+
+		skb = virtio_vsock_skb_dequeue(&vsock->send_pkt_queue);
+		if (!skb)
+			break;
+
+		reply = virtio_vsock_skb_reply(skb);
+		sgs = vsock->out_sgs;
+		sg_init_one(sgs[out_sg], virtio_vsock_hdr(skb),
+			    sizeof(*virtio_vsock_hdr(skb)));
+		out_sg++;
+
+		if (!skb_is_nonlinear(skb)) {
+			if (skb->len > 0) {
+				sg_init_one(sgs[out_sg], skb->data, skb->len);
+				out_sg++;
+			}
+		} else {
+			struct skb_shared_info *si;
+			int i;
+
+			/* If skb is nonlinear, then its buffer must contain
+			 * only header and nothing more. Data is stored in
+			 * the fragged part.
+			 */
+			WARN_ON_ONCE(skb_headroom(skb) != sizeof(*virtio_vsock_hdr(skb)));
+
+			si = skb_shinfo(skb);
+
+			for (i = 0; i < si->nr_frags; i++) {
+				skb_frag_t *skb_frag = &si->frags[i];
+				void *va;
+
+				/* We will use 'page_to_virt()' for the userspace page
+				 * here, because virtio or dma-mapping layers will call
+				 * 'virt_to_phys()' later to fill the buffer descriptor.
+				 * We don't touch memory at "virtual" address of this page.
+				 */
+				va = page_to_virt(skb_frag_page(skb_frag));
+				sg_init_one(sgs[out_sg],
+					    va + skb_frag_off(skb_frag),
+					    skb_frag_size(skb_frag));
+				out_sg++;
+			}
+		}
+
+		ret = virtqueue_add_sgs(vq, sgs, out_sg, in_sg, skb, GFP_KERNEL);
+		/* Usually this means that there is no more space available in
+		 * the vq
+		 */
+		if (ret < 0) {
+			virtio_vsock_skb_queue_head(&vsock->send_pkt_queue, skb);
+			break;
+		}
+
+		virtio_transport_deliver_tap_pkt(skb);
+
+		if (reply) {
+			struct virtqueue *rx_vq = vsock->vqs[VSOCK_VQ_RX];
+			int val;
+
+			val = atomic_dec_return(&vsock->queued_replies);
+
+			/* Do we now have resources to resume rx processing? */
+			if (val + 1 == virtqueue_get_vring_size(rx_vq))
+				restart_rx = true;
+		}
+
+		added = true;
+	}
+
+	if (added)
+		virtqueue_kick(vq);
+
+out:
+	mutex_unlock(&vsock->tx_lock);
+
+	if (restart_rx)
+		virtio_transport_rx_blocking(vsock);
+		// queue_work(virtio_vsock_workqueue, &vsock->rx_work);
+}
+
 
 static int
 virtio_transport_send_pkt(struct sk_buff *skb)
 {
+	pr_info("vsock: virtio_transport.c: virtio_transport_send_pkt\n");
+	
 	struct virtio_vsock_hdr *hdr;
 	struct virtio_vsock *vsock;
 	int len = skb->len;
@@ -222,7 +424,8 @@ virtio_transport_send_pkt(struct sk_buff *skb)
 		atomic_inc(&vsock->queued_replies);
 
 	virtio_vsock_skb_queue_tail(&vsock->send_pkt_queue, skb);
-	queue_work(virtio_vsock_workqueue, &vsock->send_pkt_work);
+	// queue_work(virtio_vsock_workqueue, &vsock->send_pkt_work);
+	virtio_transport_send_pkt_blocking(vsock);
 
 out_rcu:
 	rcu_read_unlock();
@@ -251,7 +454,8 @@ virtio_transport_cancel_pkt(struct vsock_sock *vsk)
 		new_cnt = atomic_sub_return(cnt, &vsock->queued_replies);
 		if (new_cnt + cnt >= virtqueue_get_vring_size(rx_vq) &&
 		    new_cnt < virtqueue_get_vring_size(rx_vq))
-			queue_work(virtio_vsock_workqueue, &vsock->rx_work);
+			virtio_transport_rx_blocking(vsock);
+			// queue_work(virtio_vsock_workqueue, &vsock->rx_work);
 	}
 
 	ret = 0;
@@ -261,39 +465,9 @@ out_rcu:
 	return ret;
 }
 
-static void virtio_vsock_rx_fill(struct virtio_vsock *vsock)
-{
-	int total_len = VIRTIO_VSOCK_DEFAULT_RX_BUF_SIZE + VIRTIO_VSOCK_SKB_HEADROOM;
-	struct scatterlist pkt, *p;
-	struct virtqueue *vq;
-	struct sk_buff *skb;
-	int ret;
-
-	vq = vsock->vqs[VSOCK_VQ_RX];
-
-	do {
-		skb = virtio_vsock_alloc_skb(total_len, GFP_KERNEL);
-		if (!skb)
-			break;
-
-		memset(skb->head, 0, VIRTIO_VSOCK_SKB_HEADROOM);
-		sg_init_one(&pkt, virtio_vsock_hdr(skb), total_len);
-		p = &pkt;
-		ret = virtqueue_add_sgs(vq, &p, 0, 1, skb, GFP_KERNEL);
-		if (ret < 0) {
-			kfree_skb(skb);
-			break;
-		}
-
-		vsock->rx_buf_nr++;
-	} while (vq->num_free);
-	if (vsock->rx_buf_nr > vsock->rx_buf_max_nr)
-		vsock->rx_buf_max_nr = vsock->rx_buf_nr;
-	virtqueue_kick(vq);
-}
-
 static void virtio_transport_tx_work(struct work_struct *work)
 {
+	pr_info("vsock: virtio_transport.c: virtio_transport_tx_work\n");
 	struct virtio_vsock *vsock =
 		container_of(work, struct virtio_vsock, tx_work);
 	struct virtqueue *vq;
@@ -320,19 +494,41 @@ out:
 	mutex_unlock(&vsock->tx_lock);
 
 	if (added)
-		queue_work(virtio_vsock_workqueue, &vsock->send_pkt_work);
+		virtio_transport_send_pkt_blocking(vsock);
+		// queue_work(virtio_vsock_workqueue, &vsock->send_pkt_work);
 }
 
-/* Is there space left for replies to rx packets? */
-static bool virtio_transport_more_replies(struct virtio_vsock *vsock)
+static void virtio_transport_tx_blocking(struct virtio_vsock *vsock)
 {
-	struct virtqueue *vq = vsock->vqs[VSOCK_VQ_RX];
-	int val;
+	pr_info("vsock: virtio_transport.c: virtio_transport_tx_blocking\n");
+	// struct virtio_vsock *vsock =
+	// 	container_of(work, struct virtio_vsock, tx_work);
+	struct virtqueue *vq;
+	bool added = false;
 
-	smp_rmb(); /* paired with atomic_inc() and atomic_dec_return() */
-	val = atomic_read(&vsock->queued_replies);
+	vq = vsock->vqs[VSOCK_VQ_TX];
+	mutex_lock(&vsock->tx_lock);
 
-	return val < virtqueue_get_vring_size(vq);
+	if (!vsock->tx_run)
+		goto out;
+
+	do {
+		struct sk_buff *skb;
+		unsigned int len;
+
+		virtqueue_disable_cb(vq);
+		while ((skb = virtqueue_get_buf(vq, &len)) != NULL) {
+			consume_skb(skb);
+			added = true;
+		}
+	} while (!virtqueue_enable_cb(vq));
+
+out:
+	mutex_unlock(&vsock->tx_lock);
+
+	if (added)
+		virtio_transport_send_pkt_blocking(vsock);
+		// queue_work(virtio_vsock_workqueue, &vsock->send_pkt_work);
 }
 
 /* event_lock must be held */
@@ -400,6 +596,7 @@ static void virtio_vsock_event_handle(struct virtio_vsock *vsock,
 
 static void virtio_transport_event_work(struct work_struct *work)
 {
+	pr_info("vsock: virtio_transport.c: virtio_transport_event_work\n");
 	struct virtio_vsock *vsock =
 		container_of(work, struct virtio_vsock, event_work);
 	struct virtqueue *vq;
@@ -444,7 +641,8 @@ static void virtio_vsock_tx_done(struct virtqueue *vq)
 
 	if (!vsock)
 		return;
-	queue_work(virtio_vsock_workqueue, &vsock->tx_work);
+	// queue_work(virtio_vsock_workqueue, &vsock->tx_work);
+	virtio_transport_tx_blocking(vsock);	
 }
 
 static void virtio_vsock_rx_done(struct virtqueue *vq)
@@ -453,7 +651,8 @@ static void virtio_vsock_rx_done(struct virtqueue *vq)
 
 	if (!vsock)
 		return;
-	queue_work(virtio_vsock_workqueue, &vsock->rx_work);
+	virtio_transport_rx_blocking(vsock);
+	// queue_work(virtio_vsock_workqueue, &vsock->rx_work);
 }
 
 static bool virtio_transport_can_msgzerocopy(int bufs_num)
@@ -564,6 +763,7 @@ static bool virtio_transport_seqpacket_allow(u32 remote_cid)
 
 static void virtio_transport_rx_work(struct work_struct *work)
 {
+	pr_info("vsock: virtio_transport.c: virtio_transport_rx_work\n");
 	struct virtio_vsock *vsock =
 		container_of(work, struct virtio_vsock, rx_work);
 	struct virtqueue *vq;
@@ -660,7 +860,8 @@ static void virtio_vsock_vqs_start(struct virtio_vsock *vsock)
 	 * as long as we don't fill the queues with empty buffers, the
 	 * host can't send us any notification.
 	 */
-	queue_work(virtio_vsock_workqueue, &vsock->send_pkt_work);
+	virtio_transport_send_pkt_blocking(vsock);
+	// queue_work(virtio_vsock_workqueue, &vsock->send_pkt_work);
 }
 
 static void virtio_vsock_vqs_del(struct virtio_vsock *vsock)
