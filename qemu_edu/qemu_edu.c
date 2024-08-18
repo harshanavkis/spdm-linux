@@ -182,7 +182,9 @@ static int pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		/* 1Mb, as defined by the "1 << 20" in QEMU's memory_region_init_io. Same as pci_resource_len. */
 		resource_size_t start = pci_resource_start(dev, BAR);
 		resource_size_t end = pci_resource_end(dev, BAR);
+		pr_info("The starting address of BAR %d is %lx\n", BAR, (unsigned long)(start));
 		pr_info("length %llx\n", (unsigned long long)(end + 1 - start));
+		pr_info("EDU MMIO virtual address starts at: %lx\n", (unsigned long) mmio);
 
 		/* The PCI standardized 64 bytes of the configuration space, see LDD3. */
 		for (i = 0; i < 64u; ++i) {
@@ -191,10 +193,14 @@ static int pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		}
 		pr_info("dev->irq %x\n", dev->irq);
 
+		pr_info("QEMU EDU: Address: %llu\n", virt_to_phys(mmio));
+
 		/* Initial value of the IO memory. */
+		// for (long long j = 0; j < 2500; j++) {
 		for (i = 0; i < 0x28; i += 4) {
 			pr_info("io %x %x\n", i, ioread32((void*)(mmio + i)));
 		}
+		// }
 
 		/* DMA test.
 		 *
@@ -213,36 +219,36 @@ static int pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		 * - RPI userland /dev/mem https://github.com/Wallacoloo/Raspberry-Pi-DMA-Example
 		 * - https://stackoverflow.com/questions/34188369/easiest-way-to-use-dma-in-linux
 		 */
-		{
-			dma_addr_t dma_handle_from, dma_handle_to;
-			void *vaddr_from, *vaddr_to;
-			enum { SIZE = 4 };
+		//{
+		//	dma_addr_t dma_handle_from, dma_handle_to;
+		//	void *vaddr_from, *vaddr_to;
+		//	enum { SIZE = 4 };
 
-			/* RAM -> device. */
-			vaddr_from = dma_alloc_coherent(&(dev->dev), 4, &dma_handle_from, GFP_ATOMIC);
-			dev_info(&(dev->dev), "vaddr_from = %px\n", vaddr_from);
-			dev_info(&(dev->dev), "dma_handle_from = %llx\n", (unsigned long long)dma_handle_from);
-			*((volatile u32*)vaddr_from) = 0x12345678;
-			iowrite32((u32)dma_handle_from, mmio + IO_DMA_SRC);
-			iowrite32(DMA_BASE, mmio + IO_DMA_DST);
-			iowrite32(SIZE, mmio + IO_DMA_CNT);
-			iowrite32(DMA_CMD | DMA_IRQ, mmio + IO_DMA_CMD);
+		//	/* RAM -> device. */
+		//	vaddr_from = dma_alloc_coherent(&(dev->dev), 4, &dma_handle_from, GFP_ATOMIC);
+		//	dev_info(&(dev->dev), "vaddr_from = %px\n", vaddr_from);
+		//	dev_info(&(dev->dev), "dma_handle_from = %llx\n", (unsigned long long)dma_handle_from);
+		//	*((volatile u32*)vaddr_from) = 0x12345678;
+		//	iowrite32((u32)dma_handle_from, mmio + IO_DMA_SRC);
+		//	iowrite32(DMA_BASE, mmio + IO_DMA_DST);
+		//	iowrite32(SIZE, mmio + IO_DMA_CNT);
+		//	iowrite32(DMA_CMD | DMA_IRQ, mmio + IO_DMA_CMD);
 
-			/* device -> RAM. */
-			vaddr_to = dma_alloc_coherent(&(dev->dev), 4, &dma_handle_to, GFP_ATOMIC);
-			dev_info(&(dev->dev), "vaddr_to = %px\n", vaddr_to);
-			dev_info(&(dev->dev), "dma_handle_to = %llx\n", (unsigned long long)dma_handle_to);
-			/*
-			iowrite32(DMA_BASE, mmio + IO_DMA_SRC);
-			iowrite32((u32)dma_handle_to, mmio + IO_DMA_DST);
-			iowrite32(SIZE, mmio + IO_DMA_CNT);
-			iowrite32(DMA_CMD | DMA_FROM_DEV | DMA_IRQ, mmio + IO_DMA_CMD);
-			dev_info(&(dev->dev), "*vaddr_to = %llx\n", (unsigned long long)(*((u32*)vaddr_to)));
-			*/
+		//	/* device -> RAM. */
+		//	vaddr_to = dma_alloc_coherent(&(dev->dev), 4, &dma_handle_to, GFP_ATOMIC);
+		//	dev_info(&(dev->dev), "vaddr_to = %px\n", vaddr_to);
+		//	dev_info(&(dev->dev), "dma_handle_to = %llx\n", (unsigned long long)dma_handle_to);
+		//	/*
+		//	iowrite32(DMA_BASE, mmio + IO_DMA_SRC);
+		//	iowrite32((u32)dma_handle_to, mmio + IO_DMA_DST);
+		//	iowrite32(SIZE, mmio + IO_DMA_CNT);
+		//	iowrite32(DMA_CMD | DMA_FROM_DEV | DMA_IRQ, mmio + IO_DMA_CMD);
+		//	dev_info(&(dev->dev), "*vaddr_to = %llx\n", (unsigned long long)(*((u32*)vaddr_to)));
+		//	*/
 
-			/*dma_free_coherent(&(dev->dev), SIZE, vaddr_from, dma_handle_from);*/
-			/*dma_free_coherent(&(dev->dev), SIZE, vaddr_to, dma_handle_to);*/
-		}
+		//	/*dma_free_coherent(&(dev->dev), SIZE, vaddr_from, dma_handle_from);*/
+		//	/*dma_free_coherent(&(dev->dev), SIZE, vaddr_to, dma_handle_to);*/
+		//}
 	}
 	return 0;
 error:
