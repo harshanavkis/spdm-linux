@@ -166,6 +166,12 @@ static void __ioremap_check_mem(resource_size_t addr, unsigned long size,
 	__ioremap_check_other(addr, desc);
 }
 
+struct guest_message_header dev_access_header = {
+	.operation = 0,
+	.address = 0xfea00004,
+	.length = 4
+};
+
 struct disagg_dev_ioremap_lookup disagg_ioremap_lookup;
 
 // Initialization function

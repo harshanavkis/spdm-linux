@@ -57,7 +57,7 @@ struct guest_message_header
     uint8_t operation; /**< Operation type (OP_READ or OP_WRITE) */
     uint64_t address;  /**< Memory address for the operation */
     uint32_t length;   /**< Length of data to read or write */
-};
+} __attribute__((packed));
 
 typedef struct disagg_dev_ioremap_lookup {
     struct rb_root root;
@@ -76,6 +76,13 @@ typedef struct disagg_dev_ioremap_entry {
 void disagg_register_ioremap(unsigned long virt_addr, phys_addr_t phys_addr, size_t size);
 
 phys_addr_t disagg_ioremap_virt_to_phys(unsigned long virt_addr);
+
+extern struct guest_message_header dev_access_header;
+
+void disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, unsigned long address);
+
+#define DISAGG_DEV_OP_READ 1
+#define DISAGG_DEV_OP_WRITE 2
 /****************************************/
 
 struct mempolicy;

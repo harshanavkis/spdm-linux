@@ -600,6 +600,14 @@ config MARVELL_CN10K_DPI
 	  To compile this driver as a module, choose M here: the module
 	  will be called mrvl_cn10k_dpi.
 
+config QEMU_IVSHMEM
+    tristate "QEMU Shared Memory Communication Support"
+    depends on PCI
+    help
+      This option enables support for shared memory communication using
+	  QEMU's Inter-VM Shared Memory device. If you're running in a QEMU
+	  virtual machine and want to use ivshmem, say Y or M here.
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"

@@ -39,6 +39,7 @@
 #include <asm/sev.h>			/* snp_dump_hva_rmpentry()	*/
 
 #include <asm/insn-eval.h>
+#include <misc/qemu_ivshmem.h>
 
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
@@ -1520,13 +1521,22 @@ phys_addr_t disagg_ioremap_virt_to_phys(unsigned long virt_addr)
 
 static bool mmio_read(int size, unsigned long addr, unsigned long *val)
 {
-	pr_info("mmio_read: Address: %llu\n", disagg_ioremap_virt_to_phys(addr));
-	memset(val, 0xAF, sizeof(unsigned long));
+	uint64_t disagg_dev_phy_addr = disagg_ioremap_virt_to_phys(addr);
 
-	return true;
+	pr_info("mmio_read: Address: %llx\n", disagg_dev_phy_addr);
+
+	dev_access_header.address = disagg_dev_phy_addr;
+	dev_access_header.operation = DISAGG_DEV_OP_READ;
+	dev_access_header.length = size;
+
+	ivshmem_write(&dev_access_header, sizeof(struct guest_message_header), 0);
+
+	ivshmem_read(val, size, 0);
+
+    return true;
 }
 
-static void
+void
 disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, unsigned long address)
 {
 	pr_info("handle_page_fault: Caused by EDU disagg dev: %lu\n", address);
@@ -1538,6 +1548,8 @@ disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, uns
 	int size, extend_size;
 	u8 extend_val = 0;
 
+	pr_info("disagg_mmio_fault_handler: iptr: %lu\n", regs->ip);
+
 	if (copy_from_kernel_nofault(buffer, (void *)regs->ip, MAX_INSN_SIZE))
 		pr_info("disagg_mmio_fault_handler: -EFAULT\n");
 		// return -EFAULT;
@@ -1545,6 +1557,8 @@ disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, uns
 	if (insn_decode(&insn, buffer, MAX_INSN_SIZE, INSN_MODE_64))
 		pr_info("disagg_mmio_fault_handler: -EINVAL\n");
 		// return -EINVAL;
+	
+	pr_info("opcode: 0x%x, 0x%x, 0x%x, 0x%x\n", insn.opcode.bytes[0], insn.opcode.bytes[1], insn.opcode.bytes[2], insn.opcode.bytes[3]);
 
 	mmio = insn_decode_mmio(&insn, &size);
 
@@ -1598,12 +1612,24 @@ disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, uns
 
 	if (extend_size)
 	{
-		pr_info("disagg_mmio_fault_handler extend_size\n");
 		memset(reg, extend_val, extend_size);
+		pr_info("disagg_mmio_fault_handler extend_size\n");
 	}
 	memcpy(reg, &val, size);
+
+	pr_info("Copied val into register\n");
 	
 	regs->ip += insn.length;
+	pr_info("Incremented instruction pointer: %u\n", insn.length);
+	pr_info("disagg_mmio_fault_handler: iptr: %lu\n", regs->ip);
+
+	if (copy_from_kernel_nofault(buffer, (void *)regs->ip, MAX_INSN_SIZE))
+		pr_info("disagg_mmio_fault_handler: check iptr again: -EFAULT\n");
+	
+	if (insn_decode(&insn, buffer, MAX_INSN_SIZE, INSN_MODE_64))
+		pr_info("disagg_mmio_fault_handler: decode iptr again: -EINVAL\n");
+
+	pr_info("opcode: 0x%x, 0x%x, 0x%x, 0x%x\n", insn.opcode.bytes[0], insn.opcode.bytes[1], insn.opcode.bytes[2], insn.opcode.bytes[3]);
 }
 
 static __always_inline void
@@ -1618,6 +1644,7 @@ handle_page_fault(struct pt_regs *regs, unsigned long error_code,
 	if (unlikely(is_tracked_mmio(address)))
 	{
 		disagg_mmio_fault_handler(regs, error_code, address);
+		pr_info("handle_page_fault: iptr: %lu\n", regs->ip);
 		return;
 	}
 
