@@ -1536,6 +1536,22 @@ static bool mmio_read(int size, unsigned long addr, unsigned long *val)
     return true;
 }
 
+static bool mmio_write(int size, unsigned long addr, unsigned long val)
+{
+	uint64_t disagg_dev_phy_addr = disagg_ioremap_virt_to_phys(addr);
+
+	pr_info("mmio_write: Address: %llx\n", disagg_dev_phy_addr);
+
+	dev_access_header.address = disagg_dev_phy_addr;
+	dev_access_header.operation = DISAGG_DEV_OP_WRITE;
+	dev_access_header.length = size;
+
+	ivshmem_write(&dev_access_header, sizeof(struct guest_message_header), 0);
+	ivshmem_write(&val, sizeof(unsigned long), 0);
+
+    return true;
+}
+
 void
 disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, unsigned long address)
 {
@@ -1569,6 +1585,39 @@ disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, uns
 		reg = insn_get_modrm_reg_ptr(&insn, regs);
 		if (!reg)
 			pr_info("disagg_mmio_fault_handler: insn_get_modrm_reg_ptr: -EINVAL\n");
+	}
+
+	switch (mmio) {
+	case INSN_MMIO_WRITE:
+		memcpy(&val, reg, size);
+		if (!mmio_write(size, address, val))
+			pr_info("disagg_mmio_fault_handler switch mmio: INSN_MMIO_WRITE_IMM: -EIO\n");
+		regs->ip += insn.length;
+		return;
+	case INSN_MMIO_WRITE_IMM:
+		val = insn.immediate.value;
+		if (!mmio_write(size, address, val))
+			pr_info("disagg_mmio_fault_handler switch mmio: INSN_MMIO_WRITE_IMM: -EIO\n");
+		regs->ip += insn.length;
+		return;
+	case INSN_MMIO_READ:
+	case INSN_MMIO_READ_ZERO_EXTEND:
+	case INSN_MMIO_READ_SIGN_EXTEND:
+		/* Reads are handled below */
+		break;
+	case INSN_MMIO_MOVS:
+	case INSN_MMIO_DECODE_FAILED:
+		/*
+		 * MMIO was accessed with an instruction that could not be
+		 * decoded or handled properly. It was likely not using io.h
+		 * helpers or accessed MMIO accidentally.
+		 */
+		pr_info("disagg_mmio_fault_handler switch mmio: INSN_MMIO_DECODE_FAILED: -EINVAL\n");
+		return;
+	default:
+		WARN_ONCE(1, "Unknown insn_decode_mmio() decode value?");
+		pr_info("disagg_mmio_fault_handler switch mmio: INSN_MMIO_DECODE_FAILED: -EINVAL\n");
+		return;
 	}
 
 	switch (mmio) {

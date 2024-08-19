@@ -202,6 +202,15 @@ static int pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		}
 		// }
 
+		pr_info("Inversion test\n");
+		unsigned edu_id = ioread32((void*) mmio);
+		// for (int i=0; i<1000; i++)
+		// {
+		iowrite32(edu_id, (void*)(mmio + 4));
+		edu_id = ioread32((void*)(mmio + 4));
+		pr_info("Inverted value %x\n", edu_id);
+		// }
+
 		/* DMA test.
 		 *
 		 * TODO:
