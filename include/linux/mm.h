@@ -85,6 +85,25 @@ void disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code
 #define DISAGG_DEV_OP_WRITE 2
 /****************************************/
 
+/* 
+ * Disagg device DMA (definitions in mm/disagg_dma.c)
+ */
+
+// for now there is just one single 4K buffer available
+typedef struct {
+    void *start;
+    size_t dma_size;
+    int free;
+    spinlock_t lock;
+} disagg_dma_allocator_t;
+
+extern disagg_dma_allocator_t disagg_dma_allocator;
+
+void *disagg_dma_alloc(struct device *dev, size_t size, dma_addr_t *dma_handle);
+void disagg_dma_free(struct device *dev, size_t size, void *vadr, dma_addr_t dma_adr);
+
+/******************************/
+
 struct mempolicy;
 struct anon_vma;
 struct anon_vma_chain;

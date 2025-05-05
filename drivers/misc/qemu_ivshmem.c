@@ -4,6 +4,7 @@
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/io.h>
+#include <linux/mm.h>
 #include <misc/qemu_ivshmem.h>
 
 #define DRIVER_NAME "ivshmem_driver"
@@ -11,6 +12,10 @@
 #define WRITE_DOORBELL_OFFSET 1
 #define DOORBELL_SIZE 1  // 1 byte for each doorbell
 #define TOTAL_DOORBELL_SIZE (DOORBELL_SIZE * 2)
+#define MMIO_REGION_SIZE (sizeof(struct guest_message_header)) // there is either a header or a memory operand (here max. 8 Byte) in MMIO region
+#define DMA_PROXY_ADDRESS_OFFSET (((TOTAL_DOORBELL_SIZE + MMIO_REGION_SIZE + 7) >> 3) << 3) // 8 Byte aligned
+#define DMA_REGION_OFFSET (1 << 12) // 4K aligned
+#define DMA_SIZE (SHMEM_SIZE - DMA_REGION_OFFSET)
 
 struct ivshmem_dev {
     struct pci_dev *pdev;
@@ -50,6 +55,11 @@ static int ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
     ivs_dev_global = ivs_dev;
 
     pr_info("ivshmem: Shared memory size: %zu bytes\n", ivs_dev->shmem_size);
+
+    // setup dma allocator
+    disagg_dma_allocator.start = ivs_dev->shmem + DMA_REGION_OFFSET;
+    disagg_dma_allocator.dma_size = 1 << 12;
+    disagg_dma_allocator.free = 1;
 
     return 0;
 
@@ -119,6 +129,24 @@ ssize_t ivshmem_read(void *buf, size_t count, loff_t offset)
 }
 EXPORT_SYMBOL(ivshmem_read);
 
+// another shared memory read to a non-mmio region (no need for doorbells)
+ssize_t ivshmem_read_nonblocking(void *buf, size_t count, loff_t offset)
+{
+    if (!ivs_dev_global || !ivs_dev_global->shmem)
+        return -ENODEV;
+
+    if (offset >= ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE)
+        return 0;
+
+    if (offset + count > ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE)
+        count = ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE - offset;
+
+    memcpy_fromio(buf, ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, count);
+
+    return count;
+}
+EXPORT_SYMBOL(ivshmem_read_nonblocking);
+
 ssize_t ivshmem_write(const void *buf, size_t count, loff_t offset)
 {
     if (!ivs_dev_global || !ivs_dev_global->shmem)
@@ -156,3 +184,4 @@ module_exit(ivshmem_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Harshavardhan Unnibhavi");
 MODULE_DESCRIPTION("QEMU ivshmem PCI driver with polling synchronization");
+
