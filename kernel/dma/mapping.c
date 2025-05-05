@@ -14,6 +14,8 @@
 #include <linux/of_device.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
+#include <linux/pci.h> /* for dev_is_pci and cast to pci_dev when checkinf for EDU */
+#include <linux/container_of.h> /* for casting to struct pci_dev */
 #include "debug.h"
 #include "direct.h"
 
@@ -540,8 +542,17 @@ void *dma_alloc_attrs(struct device *dev, size_t size, dma_addr_t *dma_handle,
 {
 	const struct dma_map_ops *ops = get_dma_ops(dev);
 	void *cpu_addr;
+	struct pci_dev *pdev;
 
 	WARN_ON_ONCE(!dev->coherent_dma_mask);
+
+	if (dev_is_pci(dev)) {
+	    pdev = container_of(dev, struct pci_dev, dev);
+	    if ((pdev->vendor == 0x1234) && (pdev->device == 0x11e8)) {
+		    pr_info("dma_alloc_attrs: QEMU EDU tries alloc\n");
+		    return disagg_dma_alloc(dev, size, dma_handle);
+	    }
+	}
 
 	/*
 	 * DMA allocations can never be turned back into a page pointer, so
@@ -572,7 +583,17 @@ EXPORT_SYMBOL(dma_alloc_attrs);
 void dma_free_attrs(struct device *dev, size_t size, void *cpu_addr,
 		dma_addr_t dma_handle, unsigned long attrs)
 {
+	struct pci_dev *pdev;
 	const struct dma_map_ops *ops = get_dma_ops(dev);
+
+	if (dev_is_pci(dev)) {
+		pdev = container_of(dev, struct pci_dev, dev);
+		if ((pdev->vendor == 0x1234) && (pdev->device == 0x11e8)) {
+			pr_info("dma_free_attrs: QEMU EDU tries to free DMA buffer\n");
+			disagg_dma_free(dev, size, cpu_addr, dma_handle);
+			return;
+		}
+	}
 
 	if (dma_release_from_dev_coherent(dev, get_order(size), cpu_addr))
 		return;
