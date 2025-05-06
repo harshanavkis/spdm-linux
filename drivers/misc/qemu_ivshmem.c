@@ -130,6 +130,7 @@ ssize_t ivshmem_read(void *buf, size_t count, loff_t offset)
 EXPORT_SYMBOL(ivshmem_read);
 
 // another shared memory read to a non-mmio region (no need for doorbells)
+// does really read at offset (not at offset + TOTAL_DOORBELL_SIZE like the other read)
 ssize_t ivshmem_read_nonblocking(void *buf, size_t count, loff_t offset)
 {
     if (!ivs_dev_global || !ivs_dev_global->shmem)
@@ -141,7 +142,7 @@ ssize_t ivshmem_read_nonblocking(void *buf, size_t count, loff_t offset)
     if (offset + count > ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE)
         count = ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE - offset;
 
-    memcpy_fromio(buf, ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, count);
+    memcpy_fromio(buf, ivs_dev_global->shmem + offset, count);
 
     return count;
 }
