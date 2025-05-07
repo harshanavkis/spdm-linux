@@ -1,0 +1,320 @@
+/* many things copied from  https://cirosantilli.com/linux-kernel-module-cheat#qemu-edu */
+#include <linux/cdev.h>
+#include <linux/module.h>
+#include <linux/init.h>
+#include <linux/pci.h>
+#include <linux/kernel.h>
+#include <linux/device.h> // for dev_* debugging messages
+#include <asm-generic/io.h> // for iowrite*/ioread*
+
+#define QEMU_VENDOR_ID 0x1234
+#define QEMU_EDU_DEVICE_ID 0x11e8
+#define PCI_BAR 0
+#define MY_DRIVER_NAME "my_qemu_edu_driver"
+#define CDEV_NAME "my_qemu_edu"
+
+/* Registers. */
+#define IO_IRQ_STATUS 0x24
+#define IO_IRQ_ACK 0x64
+#define IO_DMA_SRC 0x80
+#define IO_DMA_DST 0x88
+#define IO_DMA_CNT 0x90
+#define IO_DMA_CMD 0x98
+
+/* Constants */
+#define DMA_BASE 0x40000
+#define DMA_CMD 0x1
+#define DMA_FROM_DEV 0x2
+#define DMA_IRQ 0x4
+
+
+static int major;
+static struct pci_dev *pdev;
+static void __iomem *mmio;
+
+static struct pci_device_id my_pci_ids[] = {
+    { PCI_DEVICE(QEMU_VENDOR_ID, QEMU_EDU_DEVICE_ID) },
+    { 0, }
+};
+MODULE_DEVICE_TABLE(pci, my_pci_ids);
+
+
+/* Cdev file operations */
+
+static ssize_t my_read(struct file *filep, char __user *buf, size_t len, loff_t *off)
+{
+    // use ioread* and copy_to_user
+    return 0;
+}
+
+static ssize_t my_write(struct file *filep, const char __user *buf, size_t len, loff_t *off)
+{
+    // use iowrite* and copy_from_user
+    return 0;
+}
+
+static struct file_operations my_fops = {
+    .owner = THIS_MODULE,
+    .read = my_read,
+    .write = my_write,
+};
+
+/* Irq */
+
+static irqreturn_t my_irq_handler(int irq, void *dev)
+{
+    int devi;
+    irqreturn_t ret;
+    u32 irq_status;
+
+    devi = *(int *)dev;
+    if (devi == major) {
+	irq_status = ioread32(mmio + IO_IRQ_STATUS);
+	pr_info("my_irq_handler irq = %d, dev = %d, irq_status = %llx\n",
+		irq, devi, (unsigned long long) irq_status);
+	iowrite32(irq_status, mmio + IO_IRQ_ACK);
+	ret = IRQ_HANDLED;
+    } else {
+	ret = IRQ_NONE;
+    }
+    return ret;
+}
+
+/* Pci specific code */
+
+/* https://www.kernel.org/doc/html/latest/PCI/pci.html#device-initialization-steps */
+static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
+{
+    dev_info(&dev->dev, "my_pci_probe\n");
+
+    pdev = dev;
+    major = register_chrdev(0, CDEV_NAME, &my_fops);
+
+    if (pci_enable_device(dev) < 0) {
+	dev_err(&dev->dev, "Error: pci_enable_device failed\n");
+	goto error;
+    }
+
+    if (pci_request_region(dev, PCI_BAR, MY_DRIVER_NAME) < 0) {
+	dev_err(&dev->dev, "Error: pci_request_region failed\n");
+	goto error_requ_reg;
+    }
+
+    mmio = pci_iomap(dev, PCI_BAR, pci_resource_len(dev, PCI_BAR));
+
+    /* IRQ setup */
+    pci_set_master(dev);
+
+    if (pci_alloc_irq_vectors(dev, 1, 1, PCI_IRQ_MSI) < 0) {
+	dev_err(&(dev->dev), "Error: pci_alloc_irq_vectors failed\n");
+	goto error_irq_vectors;
+    }
+
+    dev->irq = pci_irq_vector(dev, 0);
+
+    if (request_irq(dev->irq, my_irq_handler, 0, CDEV_NAME, &major) < 0) {
+	dev_err(&(dev->dev), "Error: request_irq failed\n");
+	goto error_requ_irq;
+    }
+
+	/* Optional sanity checks. The PCI is ready now, all of this could also be called from fops. */
+	{
+		unsigned i;
+		u8 val;
+
+		/* Check that we are using MEM instead of IO.
+		 *
+		 * In QEMU, the type is defiened by either:
+		 *
+		 * - PCI_BASE_ADDRESS_SPACE_IO
+		 * - PCI_BASE_ADDRESS_SPACE_MEMORY
+		 */
+		if ((pci_resource_flags(dev, PCI_BAR) & IORESOURCE_MEM) != IORESOURCE_MEM) {
+			dev_err(&(dev->dev), "pci_resource_flags\n");
+			goto error;
+		}
+
+		/* 1Mb, as defined by the "1 << 20" in QEMU's memory_region_init_io. Same as pci_resource_len. */
+		resource_size_t start = pci_resource_start(dev, PCI_BAR);
+		resource_size_t end = pci_resource_end(dev, PCI_BAR);
+		pr_info("The starting address of BAR %d is %lx\n", PCI_BAR, (unsigned long)(start));
+		pr_info("length %llx\n", (unsigned long long)(end + 1 - start));
+		pr_info("EDU MMIO virtual address starts at: %lx\n", (unsigned long) mmio);
+
+		/* The PCI standardized 64 bytes of the configuration space, see LDD3. */
+		for (i = 0; i < 64u; ++i) {
+			pci_read_config_byte(dev, i, &val);
+			pr_info("config %x %x\n", i, val);
+		}
+		pr_info("dev->irq %x\n", dev->irq);
+
+		pr_info("QEMU EDU: Address: %llu\n", virt_to_phys(mmio));
+
+		/* Initial value of the IO memory. */
+		// for (long long j = 0; j < 2500; j++) {
+		for (i = 0; i < 0x28; i += 4) {
+			pr_info("io %x %x\n", i, ioread32((void*)(mmio + i)));
+		}
+		// }
+
+		pr_info("Inversion test\n");
+		unsigned edu_id = ioread32((void*) mmio);
+		// for (int i=0; i<1000; i++)
+		// {
+		iowrite32(edu_id, (void*)(mmio + 4));
+		edu_id = ioread32((void*)(mmio + 4));
+		pr_info("Inverted value %x\n", edu_id);
+
+		
+
+		/* DMA test.
+		 *
+		 * TODO:
+		 *
+		 * - deal with interrupts properly.
+		 * - printf / gdb in QEMU source says dma_buf is not being set correctly
+		 *
+		 * Resources:
+		 *
+		 * - http://elixir.free-electrons.com/linux/v4.12/source/Documentation/DMA-API-HOWTO.txt
+		 * - http://www.makelinux.net/ldd3/chp-15-sect-4
+		 * - https://stackoverflow.com/questions/32592734/are-there-any-dma-linux-kernel-driver-example-with-pcie-for-fpga/44716747#44716747
+		 * - https://stackoverflow.com/questions/17913679/how-to-instantiate-and-use-a-dma-driver-linux-module
+		 * - https://stackoverflow.com/questions/5539375/linux-kernel-device-driver-to-dma-from-a-device-into-user-space-memory
+		 * - RPI userland /dev/mem https://github.com/Wallacoloo/Raspberry-Pi-DMA-Example
+		 * - https://stackoverflow.com/questions/34188369/easiest-way-to-use-dma-in-linux
+		 */
+		{
+		    dev_info(&(dev->dev), "\n\nDMA Test\n");
+		    dma_addr_t dma_handle_from/*, dma_handle_to*/;
+		    void *vaddr_from/*, *vaddr_to*/;
+		    enum { SIZE = 4 };
+
+		    vaddr_from = dma_alloc_coherent(&(dev->dev), 4, &dma_handle_from, GFP_ATOMIC);
+		    if (vaddr_from == NULL) {
+			dev_info(&(dev->dev), "my_pci_probe: dma_alloc_coherent failed\n");
+			return 0;
+		    }
+		    dev_info(&(dev->dev), "vaddr_from = %px\n", vaddr_from);
+		    dev_info(&(dev->dev), "dma_handle_from = %px\n", (void *) dma_handle_from);
+		    *((volatile u32*)vaddr_from) = 0x12345678;
+		    writeq((u64)dma_handle_from, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    *((volatile u32*)vaddr_from) = 0xffffffff;
+
+		    writeq(DMA_BASE, mmio + IO_DMA_SRC);
+		    writeq((u64)dma_handle_from, mmio + IO_DMA_DST);
+		    writeq(SIZE, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    u32 actual = *((volatile u32*)vaddr_from);
+		    if (actual == 0x12345678) {
+			dev_info(&(dev->dev), "DMA test passed\n");
+		    } else {
+			dev_info(&(dev->dev), "DMA test failed! Expected: 0x12345678, actual: 0x%x\n", actual);
+		    }
+
+		    dma_free_coherent(&(dev->dev), 4, vaddr_from, dma_handle_from);
+		}
+		{
+		    /* DMA Test 2
+		     * Device does DMA random bytes to its internal memory
+		     * and then writes those bytes to another location than
+		     * where it was read from.
+		     */
+		    dev_info(&(dev->dev), "\n\nDMA Test 2\n");
+		    dma_addr_t dma_handle;
+		    void *vaddr;
+		    enum { SIZE = 256 };
+		    void *buf = kmalloc_array(SIZE, 1, GFP_KERNEL);
+		    get_random_bytes(buf, SIZE);
+
+		    vaddr = dma_alloc_coherent(&(dev->dev), 4096, &dma_handle, GFP_ATOMIC);
+		    if (vaddr == NULL) {
+			dev_info(&(dev->dev), "my_pci_probe: dma_alloc_coherent failed\n");
+			return 0;
+		    }
+		    dev_info(&(dev->dev), "vaddr = %px\n", vaddr);
+		    dev_info(&(dev->dev), "dma_handle = %px\n", (void *) dma_handle);
+		    memcpy(vaddr, buf, SIZE);
+		    writeq((u64)dma_handle, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+
+		    writeq(DMA_BASE, mmio + IO_DMA_SRC);
+		    writeq((u64)dma_handle + 2048, mmio + IO_DMA_DST);
+		    writeq(SIZE, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    if (memcmp(vaddr + 2048, buf, SIZE) == 0) {
+			dev_info(&(dev->dev), "DMA test 2 passed\n");
+		    } else {
+			dev_info(&(dev->dev), "DMA test 2 failed!\n");
+		    }
+
+		    dma_free_coherent(&(dev->dev), 4, vaddr, dma_handle);
+		    kfree(buf);
+		}
+	}
+
+    return 0;
+
+error_requ_irq:
+    pci_free_irq_vectors(dev);
+error_irq_vectors:
+    pci_iounmap(dev, mmio);
+    pci_release_region(dev, PCI_BAR);
+error_requ_reg:
+    pci_disable_device(dev);
+error:
+    return 1;
+}
+
+static void my_pci_remove(struct pci_dev *dev)
+{
+    dev_info(&dev->dev, "my_pci_remove\n");
+    free_irq(pci_irq_vector(dev, 0), &major);
+    pci_free_irq_vectors(dev);
+    pci_iounmap(dev, mmio);
+    pci_disable_device(dev);
+    pci_release_region(dev, PCI_BAR); /* has to be called after disabling device */
+    unregister_chrdev(major, CDEV_NAME);
+}
+
+
+static struct pci_driver my_pci_driver = {
+    .name = MY_DRIVER_NAME,
+    .id_table = my_pci_ids,
+    .probe = my_pci_probe,
+    .remove = my_pci_remove,
+};
+
+
+/* Module handling */
+static int __init my_init(void)
+{
+    if (pci_register_driver(&my_pci_driver) < 0) {
+	pr_err("my_init: pci_reigster_driver failed\n");
+	return 1;
+    }
+    return 0;
+}
+
+static void __exit my_exit(void)
+{
+    pci_unregister_driver(&my_pci_driver);
+};
+
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Driver for the qemu EDU device");
+module_init(my_init);
+module_exit(my_exit);

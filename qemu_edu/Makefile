@@ -2,6 +2,7 @@ PWD := $(shell pwd)
 KDIR = ..
 
 obj-m += qemu_edu.o
+obj-m += my_qemu_edu.o
 
 all:
 	make -C $(KDIR) M=$(PWD) modules
