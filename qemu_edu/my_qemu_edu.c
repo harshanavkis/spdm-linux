@@ -221,6 +221,49 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 		    dma_free_coherent(&(dev->dev), 4, vaddr_from, dma_handle_from);
 		}
+		{
+		    /* DMA Test 2
+		     * Device does DMA random bytes to its internal memory
+		     * and then writes those bytes to another location than
+		     * where it was read from.
+		     */
+		    dev_info(&(dev->dev), "\n\nDMA Test 2\n");
+		    dma_addr_t dma_handle;
+		    void *vaddr;
+		    enum { SIZE = 256 };
+		    void *buf = kmalloc_array(SIZE, 1, GFP_KERNEL);
+		    get_random_bytes(buf, SIZE);
+
+		    vaddr = dma_alloc_coherent(&(dev->dev), 4096, &dma_handle, GFP_ATOMIC);
+		    if (vaddr == NULL) {
+			dev_info(&(dev->dev), "my_pci_probe: dma_alloc_coherent failed\n");
+			return 0;
+		    }
+		    dev_info(&(dev->dev), "vaddr = %px\n", vaddr);
+		    dev_info(&(dev->dev), "dma_handle = %px\n", (void *) dma_handle);
+		    memcpy(vaddr, buf, SIZE);
+		    writeq((u64)dma_handle, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+
+		    writeq(DMA_BASE, mmio + IO_DMA_SRC);
+		    writeq((u64)dma_handle + 2048, mmio + IO_DMA_DST);
+		    writeq(SIZE, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    if (memcmp(vaddr + 2048, buf, SIZE) == 0) {
+			dev_info(&(dev->dev), "DMA test 2 passed\n");
+		    } else {
+			dev_info(&(dev->dev), "DMA test 2 failed!\n");
+		    }
+
+		    dma_free_coherent(&(dev->dev), 4, vaddr, dma_handle);
+		    kfree(buf);
+		}
 	}
 
     return 0;
