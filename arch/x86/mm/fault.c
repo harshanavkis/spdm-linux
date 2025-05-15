@@ -1547,7 +1547,7 @@ static bool mmio_write(int size, unsigned long addr, unsigned long val)
 	dev_access_header.length = size;
 
 	ivshmem_write(&dev_access_header, sizeof(struct guest_message_header), 0);
-	ivshmem_write(&val, sizeof(unsigned long), 0);
+	ivshmem_write(&val, size, 0);
 
     return true;
 }

@@ -37,7 +37,7 @@ void *disagg_dma_alloc(struct device *dev, size_t size, dma_addr_t *dma_handle)
     disagg_dma_allocator.free = 0;
 
     // read the dma address for the proxy into the handle (for now we assume sizeof(dma_addr_t) == 8)
-    if (ivshmem_read_nonblocking((void*) dma_handle, 8, 16) < 8) {
+    if (ivshmem_read_dma_proxy_address((void*) dma_handle, 8) < 8) {
 	pr_err("disagg_dma_alloc: reading the proxy addr from shmem failed\n");
 	goto error;
     }
