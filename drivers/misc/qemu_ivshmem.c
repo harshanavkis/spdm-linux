@@ -25,7 +25,7 @@ struct disagg_crypto {
     struct crypto_wait wait; // Used to make calls to crypto API synchronous
     size_t authsize;
     u8 *iv;
-    u64 counter; // for freshness, the AD
+    u64 *counter; // for freshness, used as the iv
     struct scatterlist sg[3]; // used by both encryption and decryption
     struct scatterlist sg_enc[3]; // encryption output
     struct scatterlist sg_dec[2]; // decryption input
@@ -43,46 +43,38 @@ struct ivshmem_dev {
 
 static struct ivshmem_dev *ivs_dev_global;
 
+#ifdef CONFIG_DISAGG_DEBUG_MMIO_SEC
 static void my_print_hexdump(const char *prefix, const void *buf, size_t len) {
     print_hex_dump(KERN_INFO, prefix, DUMP_PREFIX_NONE, 32, 1, buf, len, false);
 }
+#endif
 
 // Encrypts @data of size @count and prepends counter as associated data.
 // Appends authentication tag.
 // returns buffer with result (size of return buffer == adlen + count + authsize)
 static void *disagg_mmio_encrypt(struct disagg_crypto *crypto, const u8 *data, size_t count)
 {
-    /*
-     * Debugging
-     */
+#ifdef CONFIG_DISAGG_DEBUG_MMIO_SEC
     pr_info("disagg_mmio_encrypt:\n");
+    pr_info("counter: %llu", *crypto->counter);
     my_print_hexdump("Plaintext: ", data, count);
-    /*
-     *
-     */
+#endif
 
-    sg_set_buf(&crypto->sg[1], data, count);
+    sg_set_buf(&crypto->sg[0], data, count);
     aead_request_set_crypt(crypto->req, crypto->sg, crypto->sg_enc, count, crypto->iv);
     if (crypto_wait_req(crypto_aead_encrypt(crypto->req), &crypto->wait)) {
 	pr_err("disagg_mmio_encrypt: encryption failed\n");
 	return NULL;
     }
      
-    *((u64 *)crypto->buf_enc) = crypto->counter; // we rely on the buffer to be properly aligned
-    ++crypto->counter;
+    ++(*crypto->counter);
 
-    /*
-     * Debugging
-     */
-    my_print_hexdump("AD (counter): ", crypto->buf_enc, sizeof(crypto->counter));
+#ifdef CONFIG_DISAGG_DEBUG_MMIO_SEC
     pr_info("cipher-size (only encrypted data): %ld\n", count);
-    my_print_hexdump("ciphertext: ", crypto->buf_enc + sizeof(crypto->counter), count);
-    my_print_hexdump("Auth tag: ", crypto->buf_enc + sizeof(crypto->counter) + count, crypto->authsize);
+    my_print_hexdump("ciphertext: ", crypto->buf_enc, count);
+    my_print_hexdump("Auth tag: ", crypto->buf_enc + count, crypto->authsize);
     pr_info("\n");
-    /*
-     *
-     */
-
+#endif
 
     return crypto->buf_enc;
 }
@@ -92,20 +84,16 @@ static void *disagg_mmio_encrypt(struct disagg_crypto *crypto, const u8 *data, s
 // Returns 1 for error, 0 for success
 static int disagg_mmio_decrypt(struct disagg_crypto *crypto, u8 *buf, size_t count)
 {
-    /*
-     * Debugging
-     */
+#ifdef CONFIG_DISAGG_DEBUG_MMIO_SEC
     pr_info("disagg_mmio_decrypt:\n");
-    my_print_hexdump("AD (counter): ", crypto->buf_dec, sizeof(crypto->counter));
+    pr_info("counter: %llu", *crypto->counter);
     pr_info("cipher-size (only encrypted data): %ld\n", count);
-    my_print_hexdump("ciphertext: ", crypto->buf_dec + sizeof(crypto->counter), count);
-    my_print_hexdump("Auth Tag: ", crypto->buf_dec + sizeof(crypto->counter) + count, crypto->authsize);
-    /*
-     *
-     */
+    my_print_hexdump("ciphertext: ", crypto->buf_dec, count);
+    my_print_hexdump("Auth Tag: ", crypto->buf_dec + count, crypto->authsize);
+#endif
 
     int err;
-    sg_set_buf(&crypto->sg[1], buf, count);
+    sg_set_buf(&crypto->sg[0], buf, count);
     aead_request_set_crypt(crypto->req, crypto->sg_dec, crypto->sg, count + crypto->authsize, crypto->iv);
     err = crypto_wait_req(crypto_aead_decrypt(crypto->req), &crypto->wait);
     if (err) {
@@ -117,23 +105,12 @@ static int disagg_mmio_decrypt(struct disagg_crypto *crypto, u8 *buf, size_t cou
 	return 1;
     }
 
-    // check counter for freshness
-    if (crypto->counter != *((u64 *)crypto->buf_dec)) {
-	pr_err("disagg_mmio_decrypt: Counter differs\n");
-	return 1;
-    }
-
-         
-    /*
-     * Debugging
-     */
+#ifdef CONFIG_DISAGG_DEBUG_MMIO_SEC
     my_print_hexdump("Plaintext: ", buf, count);
     pr_info("\n");
-    /*
-     *
-     */
+#endif
 
-    ++crypto->counter;
+    ++(*crypto->counter);
     return 0;
 }
 
@@ -144,7 +121,7 @@ static int disagg_init_crypto(struct disagg_crypto *crypto, u8* key, int keylen)
     u8 *iv;
     int iv_size;
     crypto->authsize = 16; // size of the authentication code
-    int adlen = sizeof(crypto->counter); // size of the associated data (counter for freshness in our case)
+    int adlen = 0; // No ad in our case
 
     // Create transformation object
     tfm = crypto_alloc_aead("gcm(aes)", 0, 0);
@@ -153,15 +130,22 @@ static int disagg_init_crypto(struct disagg_crypto *crypto, u8* key, int keylen)
 	return 1;
     }
 
-    // Init IV (with dummy value)
+    // Init IV
     iv_size = crypto_aead_ivsize(tfm);
     pr_info("iv_size: %d", iv_size);
+    if (iv_size < sizeof(crypto->counter)) {
+	pr_info("Error: iv_size too small for this implementation");
+	goto error_free_aead;
+    }
     iv = kmalloc(iv_size, GFP_KERNEL);
     if (iv == NULL) {
 	pr_err("disagg_init_crypto: kmalloc of IV-space failed\n");
 	goto error_free_aead;
     }
-    memset((void *) iv, 0x1, iv_size);
+    memset((void *) iv, 0x0, iv_size);
+    // IV will alias the counter, allows freshness
+    crypto->counter = (u64 *) iv;
+    *crypto->counter = 0;
 
     // Set key 
     if (crypto_aead_setkey(tfm, key, keylen) < 0) {
@@ -176,7 +160,7 @@ static int disagg_init_crypto(struct disagg_crypto *crypto, u8* key, int keylen)
     }
 
     // alloc buffers used in enc/dec
-    crypto->size_buffers = adlen + crypto->authsize + 64;
+    crypto->size_buffers = crypto->authsize + 64;
     crypto->buf_enc = kmalloc(crypto->size_buffers, GFP_KERNEL); // extra 64 bytes for guest_message_header should be enough
     if (!crypto->buf_enc) {
 	pr_err("disagg_init_crypto: kmalloc failed\n");
@@ -204,17 +188,14 @@ static int disagg_init_crypto(struct disagg_crypto *crypto, u8* key, int keylen)
     aead_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG, crypto_req_done, &crypto->wait);
 
     // Set size of associated data
+    // no AD in our case
     aead_request_set_ad(req, adlen);
 
     crypto->tfm = tfm;
     crypto->req = req;
     crypto->iv = iv;
-    crypto->counter = 0;
-    sg_set_buf(&crypto->sg[0], &crypto->counter, sizeof(crypto->counter));
-    sg_set_buf(&crypto->sg_enc[0], crypto->buf_enc, sizeof(crypto->counter));
-    sg_set_buf(&crypto->sg_enc[1], crypto->buf_enc + sizeof(crypto->counter), crypto->size_buffers - sizeof(crypto->counter));
-    sg_set_buf(&crypto->sg_dec[0], crypto->buf_dec, sizeof(crypto->counter));
-    sg_set_buf(&crypto->sg_dec[1], crypto->buf_dec + sizeof(crypto->counter), crypto->size_buffers - sizeof(crypto->counter));
+    sg_set_buf(&crypto->sg_enc[0], crypto->buf_enc, crypto->size_buffers);
+    sg_set_buf(&crypto->sg_dec[0], crypto->buf_dec, crypto->size_buffers);
 
     return 0;
 

@@ -1523,7 +1523,9 @@ static bool mmio_read(int size, unsigned long addr, unsigned long *val)
 {
 	uint64_t disagg_dev_phy_addr = disagg_ioremap_virt_to_phys(addr);
 
+#ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("mmio_read: Address: %llx\n", disagg_dev_phy_addr);
+#endif
 
 	dev_access_header.address = disagg_dev_phy_addr;
 	dev_access_header.operation = DISAGG_DEV_OP_READ;
@@ -1540,7 +1542,9 @@ static bool mmio_write(int size, unsigned long addr, unsigned long val)
 {
 	uint64_t disagg_dev_phy_addr = disagg_ioremap_virt_to_phys(addr);
 
+#ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("mmio_write: Address: %llx\n", disagg_dev_phy_addr);
+#endif
 
 	dev_access_header.address = disagg_dev_phy_addr;
 	dev_access_header.operation = DISAGG_DEV_OP_WRITE;
@@ -1555,7 +1559,9 @@ static bool mmio_write(int size, unsigned long addr, unsigned long val)
 void
 disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, unsigned long address)
 {
+#ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("handle_page_fault: Caused by EDU disagg dev: %lu\n", address);
+#endif
 
 	unsigned long *reg, val;
 	char buffer[MAX_INSN_SIZE];
@@ -1564,7 +1570,9 @@ disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, uns
 	int size, extend_size;
 	u8 extend_val = 0;
 
+#ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("disagg_mmio_fault_handler: iptr: %lu\n", regs->ip);
+#endif
 
 	if (copy_from_kernel_nofault(buffer, (void *)regs->ip, MAX_INSN_SIZE))
 		pr_info("disagg_mmio_fault_handler: -EFAULT\n");
@@ -1574,7 +1582,9 @@ disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, uns
 		pr_info("disagg_mmio_fault_handler: -EINVAL\n");
 		// return -EINVAL;
 	
+#ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("opcode: 0x%x, 0x%x, 0x%x, 0x%x\n", insn.opcode.bytes[0], insn.opcode.bytes[1], insn.opcode.bytes[2], insn.opcode.bytes[3]);
+#endif
 
 	mmio = insn_decode_mmio(&insn, &size);
 
@@ -1662,15 +1672,21 @@ disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, uns
 	if (extend_size)
 	{
 		memset(reg, extend_val, extend_size);
+#ifdef CONFIG_DISAGG_DEBUG_MMIO
 		pr_info("disagg_mmio_fault_handler extend_size\n");
+#endif
 	}
 	memcpy(reg, &val, size);
 
+#ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("Copied val into register\n");
+#endif
 	
 	regs->ip += insn.length;
+#ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("Incremented instruction pointer: %u\n", insn.length);
 	pr_info("disagg_mmio_fault_handler: iptr: %lu\n", regs->ip);
+#endif
 
 	if (copy_from_kernel_nofault(buffer, (void *)regs->ip, MAX_INSN_SIZE))
 		pr_info("disagg_mmio_fault_handler: check iptr again: -EFAULT\n");
@@ -1678,7 +1694,9 @@ disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, uns
 	if (insn_decode(&insn, buffer, MAX_INSN_SIZE, INSN_MODE_64))
 		pr_info("disagg_mmio_fault_handler: decode iptr again: -EINVAL\n");
 
+#ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("opcode: 0x%x, 0x%x, 0x%x, 0x%x\n", insn.opcode.bytes[0], insn.opcode.bytes[1], insn.opcode.bytes[2], insn.opcode.bytes[3]);
+#endif
 }
 
 static __always_inline void
@@ -1693,7 +1711,9 @@ handle_page_fault(struct pt_regs *regs, unsigned long error_code,
 	if (unlikely(is_tracked_mmio(address)))
 	{
 		disagg_mmio_fault_handler(regs, error_code, address);
+#ifdef CONFIG_DISAGG_DEBUG_MMIO
 		pr_info("handle_page_fault: iptr: %lu\n", regs->ip);
+#endif
 		return;
 	}
 
