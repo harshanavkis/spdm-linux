@@ -327,7 +327,7 @@ ssize_t ivshmem_read(void *buf, size_t count, loff_t offset)
 
     wait_for_read_doorbell_set();
 
-    memcpy_fromio(crypto->buf_dec, ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, sizeof(crypto->counter) + count + crypto->authsize);
+    memcpy_fromio(crypto->buf_dec, ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, count + crypto->authsize);
 
     if (disagg_mmio_decrypt(crypto, buf, count))
 	return 0;
@@ -382,7 +382,7 @@ ssize_t ivshmem_write(const void *buf, size_t count, loff_t offset)
 
     wait_for_write_doorbell_clear();
 
-    memcpy_toio(ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, enc_buf, sizeof(crypto->counter) + count + crypto->authsize);
+    memcpy_toio(ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, enc_buf, count + crypto->authsize);
 
     writeb(1, ivs_dev_global->shmem + WRITE_DOORBELL_OFFSET);
 
