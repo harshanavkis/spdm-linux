@@ -152,13 +152,21 @@ dma_addr_t dma_map_page_attrs(struct device *dev, struct page *page,
 {
 	const struct dma_map_ops *ops = get_dma_ops(dev);
 	dma_addr_t addr;
+	struct pci_dev *pdev;
 
 	BUG_ON(!valid_dma_direction(dir));
 
 	if (WARN_ON_ONCE(!dev->dma_mask))
 		return DMA_MAPPING_ERROR;
 
-	if (dma_map_direct(dev, ops) ||
+	if (dev_is_pci(dev)) {
+	    pdev = container_of(dev, struct pci_dev, dev);
+	}
+
+	if (unlikely((pdev->vendor == 0x1234) && (pdev->device == 0x11e8))) {
+		pr_info("dma_map_page_attrs: QEMU EDU tries DMA map\n");
+		addr = disagg_dma_map_page_attrs(dev, page, offset, size, dir, attrs);
+	} else if (dma_map_direct(dev, ops) ||
 	    arch_dma_map_page_direct(dev, page_to_phys(page) + offset + size))
 		addr = dma_direct_map_page(dev, page, offset, size, dir, attrs);
 	else
@@ -174,9 +182,18 @@ void dma_unmap_page_attrs(struct device *dev, dma_addr_t addr, size_t size,
 		enum dma_data_direction dir, unsigned long attrs)
 {
 	const struct dma_map_ops *ops = get_dma_ops(dev);
+	struct pci_dev *pdev;
 
 	BUG_ON(!valid_dma_direction(dir));
-	if (dma_map_direct(dev, ops) ||
+
+	if (dev_is_pci(dev)) {
+	    pdev = container_of(dev, struct pci_dev, dev);
+	}
+
+	if (unlikely((pdev->vendor == 0x1234) && (pdev->device == 0x11e8))) {
+		pr_info("dma_map_page_attrs: QEMU EDU tries DMA unmap\n");
+		disagg_dma_unmap_page_attrs(dev, addr, size, dir, attrs);
+	} else if (dma_map_direct(dev, ops) ||
 	    arch_dma_unmap_page_direct(dev, addr + size))
 		dma_direct_unmap_page(dev, addr, size, dir, attrs);
 	else if (ops->unmap_page)
@@ -542,17 +559,8 @@ void *dma_alloc_attrs(struct device *dev, size_t size, dma_addr_t *dma_handle,
 {
 	const struct dma_map_ops *ops = get_dma_ops(dev);
 	void *cpu_addr;
-	struct pci_dev *pdev;
 
 	WARN_ON_ONCE(!dev->coherent_dma_mask);
-
-	if (dev_is_pci(dev)) {
-	    pdev = container_of(dev, struct pci_dev, dev);
-	    if ((pdev->vendor == 0x1234) && (pdev->device == 0x11e8)) {
-		    pr_info("dma_alloc_attrs: QEMU EDU tries alloc\n");
-		    return disagg_dma_alloc(dev, size, dma_handle);
-	    }
-	}
 
 	/*
 	 * DMA allocations can never be turned back into a page pointer, so
@@ -583,17 +591,7 @@ EXPORT_SYMBOL(dma_alloc_attrs);
 void dma_free_attrs(struct device *dev, size_t size, void *cpu_addr,
 		dma_addr_t dma_handle, unsigned long attrs)
 {
-	struct pci_dev *pdev;
 	const struct dma_map_ops *ops = get_dma_ops(dev);
-
-	if (dev_is_pci(dev)) {
-		pdev = container_of(dev, struct pci_dev, dev);
-		if ((pdev->vendor == 0x1234) && (pdev->device == 0x11e8)) {
-			pr_info("dma_free_attrs: QEMU EDU tries to free DMA buffer\n");
-			disagg_dma_free(dev, size, cpu_addr, dma_handle);
-			return;
-		}
-	}
 
 	if (dma_release_from_dev_coherent(dev, get_order(size), cpu_addr))
 		return;

@@ -33,6 +33,8 @@
 #include <linux/slab.h>
 
 #include <linux/rbtree.h>
+#include <linux/dma-direction.h>
+#include <crypto/aead.h>
 
 /*
  * Remote device MMIO tracking structures
@@ -83,6 +85,7 @@ void disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code
 
 #define DISAGG_DEV_OP_READ 1
 #define DISAGG_DEV_OP_WRITE 2
+#define DISAGG_DEV_OP_DMA_MAP 3
 /****************************************/
 
 /* 
@@ -91,16 +94,25 @@ void disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code
 
 // for now there is just one single 4K buffer available
 typedef struct {
-    void *start;
+    void *shmem_dma;
     size_t dma_size;
     int free;
     spinlock_t lock;
+    struct disagg_dma_crypto {
+	struct crypto_aead *tfm;
+	struct aead_request *req;
+	struct crypto_wait wait;
+	size_t authsize;
+	u8 *iv;
+	u64 *counter;
+    } crypto;
 } disagg_dma_allocator_t;
 
 extern disagg_dma_allocator_t disagg_dma_allocator;
 
-void *disagg_dma_alloc(struct device *dev, size_t size, dma_addr_t *dma_handle);
-void disagg_dma_free(struct device *dev, size_t size, void *vadr, dma_addr_t dma_adr);
+dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size_t offset, size_t size, enum dma_data_direction dir, unsigned long attrs);
+void disagg_dma_unmap_page_attrs(struct device *dev, dma_addr_t addr, size_t size, enum dma_data_direction dir, unsigned long attrs);
+int disagg_dma_allocator_init(u8 *key, int keylen);
 
 /******************************/
 

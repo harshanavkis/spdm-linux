@@ -239,11 +239,6 @@ static int ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
     pr_info("ivshmem: Shared memory size: %zu bytes\n", ivs_dev->shmem_size);
 
-    // setup dma allocator
-    disagg_dma_allocator.start = ivs_dev->shmem + DMA_REGION_OFFSET;
-    disagg_dma_allocator.dma_size = 1 << 12;
-    disagg_dma_allocator.free = 1;
-
     // Initialize the GCM AEAD objects
     int keylen = 32;
     u8 *key = kmalloc(keylen, GFP_KERNEL);
@@ -255,7 +250,15 @@ static int ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
     if (disagg_init_crypto(&ivs_dev_global->crypto, key, keylen) != 0) {
 	goto free_key;
     }
+    if (disagg_dma_allocator_init(key, keylen) != 0) {
+	goto free_key;
+    }
     kfree(key);
+
+    // setup dma allocator
+    disagg_dma_allocator.shmem_dma = ivs_dev->shmem + DMA_REGION_OFFSET;
+    disagg_dma_allocator.dma_size = 1 << 12;
+    disagg_dma_allocator.free = 1;
 
     return 0;
 
