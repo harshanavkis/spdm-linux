@@ -261,7 +261,7 @@ error:
     spin_unlock(&disagg_dma_allocator.lock);
     disagg_dma_allocator.free = 1;
     pr_info("disagg_dma_map_page failed\n");
-    return 0;
+    return DMA_MAPPING_ERROR;
 }
 
 void disagg_dma_unmap_page_attrs(struct device *dev, dma_addr_t addr, size_t size, enum dma_data_direction dir, unsigned long attrs)

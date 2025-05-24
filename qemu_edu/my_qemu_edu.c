@@ -192,7 +192,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    memset(actual, 0xba, SIZE);
 
 		    dma_handle = dma_map_single(&(dev->dev), actual, SIZE, DMA_BIDIRECTIONAL);
-		    if (dma_handle == 0) {
+		    if (dma_mapping_error(&(dev->dev), dma_handle)) {
 			dev_info(&(dev->dev), "my_pci_probe: dma_alloc_coherent failed\n");
 			return 0;
 		    }
@@ -206,28 +206,41 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
+		    // Update values in the mapped region and tell device to also update its internal memory with it
 		    memset(actual, 0xcc, SIZE / 2);
-
 		    dma_sync_single_for_device(&(dev->dev), dma_handle, SIZE / 2, DMA_BIDIRECTIONAL);
+		    writeq((u64)dma_handle, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
-		    // Proide device with information about the DMA transfer
-		    writeq((u64)DMA_BASE, mmio + IO_DMA_SRC);
-		    writeq((u64) dma_handle, mmio + IO_DMA_DST);
+		    // Now instruct device to write internal buffer back to mapped region
+		    writeq(DMA_BASE, mmio + IO_DMA_SRC);
+		    writeq((u64)dma_handle, mmio + IO_DMA_DST);
 		    writeq(SIZE, mmio + IO_DMA_CNT);
 		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
+		    memset(actual, 0x00, SIZE);
+
 		    dma_sync_single_for_cpu(&(dev->dev), dma_handle, SIZE, DMA_BIDIRECTIONAL);
 
-		    memset(expected, 0xba, SIZE);
+		    memset(expected, 0xcc, SIZE / 2);
+		    memset(expected + SIZE/2, 0xba, SIZE / 2);
 		    if (memcmp(expected, actual, SIZE) != 0)
-			pr_info("DMA test failed");
-		    else
-			pr_info("DMA test passed");
+			goto fail;
 
+		    pr_info("DMA test 1 passed");
 		    kfree(actual);
 		    kfree(expected);
+		    goto end;
 
+		fail:
+		    pr_info("DMA test 1 failed");
+		    kfree(actual);
+		    kfree(expected);
+		end:
 		}
 
 	}
