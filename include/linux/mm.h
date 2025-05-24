@@ -86,6 +86,22 @@ void disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code
 #define DISAGG_DEV_OP_READ 1
 #define DISAGG_DEV_OP_WRITE 2
 #define DISAGG_DEV_OP_DMA_MAP 3
+
+/*
+ * Instructs device to encrypt specific memory region into shmem
+ * 1st message (host -> proxy): sturct guest_message_header: addr = proxySrc 
+ * 2nd message (host -> proxy): proxyShmemDst 
+ * 3rd message (proxy -> host): completion information (0 for success, 1 for failure), size of message 1 byte
+ */
+#define DISAGG_DEV_OP_DMA_ENC 4
+
+/*
+ * Instructs device to decrypt specific memory region into its own virtual address space
+ * 1st message (host -> proxy): sturct guest_message_header: addr = shmemSrc
+ * 2nd message (host -> proxy): proxyDmaDst
+ * 3rd message (proxy -> host): completion information (0 for success, 1 for failure)
+ */
+#define DISAGG_DEV_OP_DMA_DEC 5
 /****************************************/
 
 /* 
@@ -93,10 +109,19 @@ void disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code
  */
 
 // for now there is just one single 4K buffer available
+struct disagg_dma_entry {
+    dma_addr_t proxyDma;
+    void *proxyShmem;
+    void *hostShmem;
+    void *hostAddr;
+    size_t size;
+};
+
 typedef struct {
-    void *shmem_dma;
-    size_t dma_size;
-    int free;
+    void *shmem_dma; // Virtual address of shmem mapping DMA starting point
+    size_t dma_area_size; // Size in bytes available for DMA allocations in shmem
+    int free; // Inidicates if the one entry allocator's entry is available (1 for available)
+    struct disagg_dma_entry entry; // For simplicity right now only one entry
     spinlock_t lock;
     struct disagg_dma_crypto {
 	struct crypto_aead *tfm;
@@ -110,9 +135,18 @@ typedef struct {
 
 extern disagg_dma_allocator_t disagg_dma_allocator;
 
+// hook into dma_map_page_attrs
 dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size_t offset, size_t size, enum dma_data_direction dir, unsigned long attrs);
+// hoot into dma_unmap_page_attrs
 void disagg_dma_unmap_page_attrs(struct device *dev, dma_addr_t addr, size_t size, enum dma_data_direction dir, unsigned long attrs);
+// Called when probing qemu_ivshmem
 int disagg_dma_allocator_init(u8 *key, int keylen);
+// hook into __dma_sync_single_for_cpu
+void disagg___dma_sync_single_for_cpu(struct device *dev, dma_addr_t addr, size_t size, enum dma_data_direction dir);
+// hook into __dma_sync_single_for_device
+void disagg___dma_sync_single_for_device(struct device *dev, dma_addr_t addr, size_t size, enum dma_data_direction dir);
+// Checks if @dev is our device
+bool disagg_is_dev(struct device *dev);
 
 /******************************/
 

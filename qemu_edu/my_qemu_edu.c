@@ -159,8 +159,6 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 		pr_info("Inversion test\n");
 		unsigned edu_id = ioread32((void*) mmio);
-		// for (int i=0; i<1000; i++)
-		// {
 		iowrite32(edu_id, (void*)(mmio + 4));
 		edu_id = ioread32((void*)(mmio + 4));
 		pr_info("Inverted value %x\n", edu_id);
@@ -185,87 +183,54 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		 * - https://stackoverflow.com/questions/34188369/easiest-way-to-use-dma-in-linux
 		 */
 		{
-		    dev_info(&(dev->dev), "\n\nDMA Test\n");
-		    dma_addr_t dma_handle_from/*, dma_handle_to*/;
-		    void *vaddr_from/*, *vaddr_to*/;
-		    enum { SIZE = 4 };
-
-		    vaddr_from = dma_alloc_coherent(&(dev->dev), 4, &dma_handle_from, GFP_ATOMIC);
-		    if (vaddr_from == NULL) {
-			dev_info(&(dev->dev), "my_pci_probe: dma_alloc_coherent failed\n");
-			return 0;
-		    }
-		    dev_info(&(dev->dev), "vaddr_from = %px\n", vaddr_from);
-		    dev_info(&(dev->dev), "dma_handle_from = %px\n", (void *) dma_handle_from);
-		    *((volatile u32*)vaddr_from) = 0x12345678;
-		    writeq((u64)dma_handle_from, mmio + IO_DMA_SRC);
-		    writeq(DMA_BASE, mmio + IO_DMA_DST);
-		    writeq(SIZE, mmio + IO_DMA_CNT);
-		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
-		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
-
-		    *((volatile u32*)vaddr_from) = 0xffffffff;
-
-		    writeq(DMA_BASE, mmio + IO_DMA_SRC);
-		    writeq((u64)dma_handle_from, mmio + IO_DMA_DST);
-		    writeq(SIZE, mmio + IO_DMA_CNT);
-		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
-		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
-
-		    u32 actual = *((volatile u32*)vaddr_from);
-		    if (actual == 0x12345678) {
-			dev_info(&(dev->dev), "DMA test passed\n");
-		    } else {
-			dev_info(&(dev->dev), "DMA test failed! Expected: 0x12345678, actual: 0x%x\n", actual);
-		    }
-
-		    dma_free_coherent(&(dev->dev), 4, vaddr_from, dma_handle_from);
-		}
-		{
-		    /* DMA Test 2
-		     * Device does DMA random bytes to its internal memory
-		     * and then writes those bytes to another location than
-		     * where it was read from.
-		     */
-		    dev_info(&(dev->dev), "\n\nDMA Test 2\n");
+		    dev_info(&(dev->dev), "\n\nDMA Test 1\n");
 		    dma_addr_t dma_handle;
-		    void *vaddr;
 		    enum { SIZE = 256 };
-		    void *buf = kmalloc_array(SIZE, 1, GFP_KERNEL);
-		    get_random_bytes(buf, SIZE);
+		    void *actual = kmalloc(SIZE, GFP_KERNEL);
+		    void *expected = kmalloc(SIZE, GFP_KERNEL);
 
-		    vaddr = dma_alloc_coherent(&(dev->dev), 4096, &dma_handle, GFP_ATOMIC);
-		    if (vaddr == NULL) {
+		    memset(actual, 0xba, SIZE);
+
+		    dma_handle = dma_map_single(&(dev->dev), actual, SIZE, DMA_BIDIRECTIONAL);
+		    if (dma_handle == 0) {
 			dev_info(&(dev->dev), "my_pci_probe: dma_alloc_coherent failed\n");
 			return 0;
 		    }
-		    dev_info(&(dev->dev), "vaddr = %px\n", vaddr);
+
 		    dev_info(&(dev->dev), "dma_handle = %px\n", (void *) dma_handle);
-		    memcpy(vaddr, buf, SIZE);
+
+		    // Proide device with information about the DMA transfer
 		    writeq((u64)dma_handle, mmio + IO_DMA_SRC);
 		    writeq(DMA_BASE, mmio + IO_DMA_DST);
 		    writeq(SIZE, mmio + IO_DMA_CNT);
 		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
+		    memset(actual, 0xcc, SIZE / 2);
 
-		    writeq(DMA_BASE, mmio + IO_DMA_SRC);
-		    writeq((u64)dma_handle + 2048, mmio + IO_DMA_DST);
+		    dma_sync_single_for_device(&(dev->dev), dma_handle, SIZE / 2, DMA_BIDIRECTIONAL);
+
+		    // Proide device with information about the DMA transfer
+		    writeq((u64)DMA_BASE, mmio + IO_DMA_SRC);
+		    writeq((u64) dma_handle, mmio + IO_DMA_DST);
 		    writeq(SIZE, mmio + IO_DMA_CNT);
 		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
-		    if (memcmp(vaddr + 2048, buf, SIZE) == 0) {
-			dev_info(&(dev->dev), "DMA test 2 passed\n");
-		    } else {
-			dev_info(&(dev->dev), "DMA test 2 failed!\n");
-		    }
+		    dma_sync_single_for_cpu(&(dev->dev), dma_handle, SIZE, DMA_BIDIRECTIONAL);
 
-		    dma_free_coherent(&(dev->dev), 4, vaddr, dma_handle);
-		    kfree(buf);
+		    memset(expected, 0xba, SIZE);
+		    if (memcmp(expected, actual, SIZE) != 0)
+			pr_info("DMA test failed");
+		    else
+			pr_info("DMA test passed");
+
+		    kfree(actual);
+		    kfree(expected);
+
 		}
-	}
 
+	}
     return 0;
 
 error_requ_irq:

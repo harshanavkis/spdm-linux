@@ -257,7 +257,7 @@ static int ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
     // setup dma allocator
     disagg_dma_allocator.shmem_dma = ivs_dev->shmem + DMA_REGION_OFFSET;
-    disagg_dma_allocator.dma_size = 1 << 12;
+    disagg_dma_allocator.dma_area_size = 1 << 12;
     disagg_dma_allocator.free = 1;
 
     return 0;
