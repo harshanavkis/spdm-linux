@@ -10,14 +10,6 @@
 #include <linux/scatterlist.h>
 
 #define DRIVER_NAME "ivshmem_driver"
-#define READ_DOORBELL_OFFSET 0
-#define WRITE_DOORBELL_OFFSET 1
-#define DOORBELL_SIZE 1  // 1 byte for each doorbell
-#define TOTAL_DOORBELL_SIZE (DOORBELL_SIZE * 2)
-#define DMA_PROXY_ADDRESS_OFFSET (256) // 8 Byte aligned and just far away from possible collision
-#define DMA_REGION_OFFSET (1 << 12) // 4K aligned
-#define DMA_SIZE (SHMEM_SIZE - DMA_REGION_OFFSET)
-
 
 struct disagg_crypto {
     struct crypto_aead *tfm; // Handle to transformation object
@@ -250,15 +242,10 @@ static int ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
     if (disagg_init_crypto(&ivs_dev_global->crypto, key, keylen) != 0) {
 	goto free_key;
     }
-    if (disagg_dma_allocator_init(key, keylen) != 0) {
+    if (disagg_dma_allocator_init(key, keylen, ivs_dev->shmem + DMA_REGION_OFFSET, 1 << 12) != 0) {
 	goto free_key;
     }
     kfree(key);
-
-    // setup dma allocator
-    disagg_dma_allocator.shmem_dma = ivs_dev->shmem + DMA_REGION_OFFSET;
-    disagg_dma_allocator.dma_area_size = 1 << 12;
-    disagg_dma_allocator.free = 1;
 
     return 0;
 
@@ -359,11 +346,6 @@ ssize_t ivshmem_read_nonblocking(void *buf, size_t count, loff_t offset)
     return count;
 }
 EXPORT_SYMBOL(ivshmem_read_nonblocking);
-
-ssize_t ivshmem_read_dma_proxy_address(void *buf, size_t count) {
-    return ivshmem_read_nonblocking(buf, count, DMA_PROXY_ADDRESS_OFFSET);
-}
-EXPORT_SYMBOL(ivshmem_read_dma_proxy_address);
 
 ssize_t ivshmem_write(const void *buf, size_t count, loff_t offset)
 {
