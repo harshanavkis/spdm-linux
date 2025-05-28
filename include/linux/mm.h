@@ -113,20 +113,32 @@ void disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code
  * Disagg device DMA (definitions in mm/disagg_dma.c)
  */
 
-// for now there is just one single 4K buffer available
+/*
+ * One entry corresponds to one mapped dma region
+ */
 struct disagg_dma_entry {
-    void *vmDMA;
+    struct rb_node node;
+    void *vmDMA; // start of this region
     u64 proxyDMA; // this value is enough to calculate vmShmem and proxyShmem
     size_t size;
+};
+
+/*
+ * Used to keep track of free/used dma regions
+ */
+struct memory_region {
+    u64 proxyDMA;
+    size_t size;
+    struct list_head list;
 };
 
 typedef struct {
     void *vmShmem_start; // Virtual address of shmem mapping DMA starting point
     size_t dma_area_size; // Size in bytes available for DMA allocations in shmem
     u64 proxyDMA_start; // virtual starting address of proxie's unencrypted DMA region
-    int free; // Inidicates if the one entry allocator's entry is available (1 for available)
-    struct disagg_dma_entry entry; // For simplicity right now only one entry
+    struct rb_root entry_root;
     spinlock_t lock;
+    struct list_head free_list; // tracks the still available memory blocks; sorted after proxyDMA
     struct disagg_dma_crypto {
 	struct crypto_aead *tfm;
 	struct aead_request *req;
@@ -152,6 +164,12 @@ void disagg___dma_sync_single_for_device(struct device *dev, dma_addr_t addr, si
 
 // Checks if @dev is our device
 bool disagg_is_dev(struct device *dev);
+
+// A testing function to check if the dma allocator has the expected values
+// @nodes are the expected number of nodes contained in the free_list
+// @idx specifies the list entry which should be of @size_at_idx
+// @return true for every value as expected, false otherwise
+bool disagg_test_check_dma_values(size_t nodes, size_t idx, size_t size_at_idx);
 
 /******************************/
 

@@ -22,20 +22,165 @@ static void *proxyDMA_to_vmShmem(u64 proxyDMA) {
 }
 
 /*
+ * Adds the memory region (@proxyDMA, @size) to the free list.
+ * Expects the region to not be in the list.
+ * Inserts in a sorted manner.
+ * Coalesces with neighbours if possible.
+ */
+static void add_region_to_free_list(u64 proxyDMA, size_t size) {
+    struct list_head *next = &disagg_dma_allocator.free_list; // will be the right/next neighbour; means the region has to be inserted before
+    struct list_head *prev; // Will be the left/prev neighbour
+    u8 set = 0; // Flag to indicate if the region is already inserted into the list, one way or another
+    struct memory_region *next_region = NULL;
+    struct memory_region *prev_region = NULL;
+    size = PAGE_ALIGN(size); // Normally only used to align address, but should also work for this
+
+    list_for_each(next, &disagg_dma_allocator.free_list) {
+	struct memory_region *data = list_entry(next, struct memory_region, list);
+
+	if (data->proxyDMA > proxyDMA) {
+	    // Found right spot
+	    break; 
+	}
+    }
+
+    prev = next->prev;
+
+    // Now coalesce with the neighbours if possible
+    // First previous, then next
+    // I know those cascading ifs are terrible, but cannot think of another way right now. (TODO)
+    if (!list_is_head(prev, &disagg_dma_allocator.free_list)) {
+	prev_region = list_entry(prev, struct memory_region, list);
+
+	if (prev_region->proxyDMA + prev_region->size == proxyDMA) {
+	    prev_region->size += size;
+
+	    set = 1;
+	}
+    } 
+    
+    if (!list_is_head(next, &disagg_dma_allocator.free_list)) {
+	next_region = list_entry(next, struct memory_region, list);
+
+	if (next_region->proxyDMA == proxyDMA + size) {
+	    if (set == 1) {
+		prev_region->size += next_region->size;
+		kfree(next_region);
+	    } else {
+		next_region->size += size;
+		next_region->proxyDMA = proxyDMA;
+		set = 1;
+	    }
+	}
+    }
+
+    if (set == 0) {
+	// No coalescing happened, insert it alone-standing
+	struct memory_region *new = kmalloc(sizeof(struct memory_region), GFP_KERNEL);
+	if (new == NULL) {
+	    pr_err("kmalloc failed");
+	    return;
+	}
+
+	new->proxyDMA = proxyDMA;
+	new->size = size;
+	list_add(&new->list, prev);
+    }
+}
+
+/*
+ * Removes the specified @size from @region 
+ * If @size == @region->size then it removes the entry completely from the list
+ * Expects that @size <= @region->size
+ */
+static void remove_region(struct memory_region *region, size_t size) {
+    if (size == region->size) {
+	list_del(&region->list);
+	kfree(region);
+    } else {
+	region->size -= size;
+	region->proxyDMA += size;
+    }
+}
+
+/*
+ * Searches for at least a size long free area.
+ * Just a simple first fit.
+ * @return 0 for success
+ * @return in @proxyDMA the address
+ */
+static int find_free_region(size_t size, dma_addr_t *proxyDMA) {
+
+    struct list_head *crt = &disagg_dma_allocator.free_list;
+    
+    if (list_empty(crt)) {
+	pr_err("find_free_region: no buffer available");
+	return 1;
+    }
+
+    size = PAGE_ALIGN(size); // Normally only used to align address, but should also work for this
+
+    list_for_each(crt, &disagg_dma_allocator.free_list) {
+	struct memory_region *data = list_entry(crt, struct memory_region, list);
+	
+	// Found big enough free buffer
+	if (data->size >= size) {
+	    *proxyDMA = data->proxyDMA;
+	    remove_region(data, size);
+	    return 0;
+	}
+    }
+
+    return 1;
+}
+
+
+/*
  * Looks for entry containing the specified range (addr, size)
  * @return NULL for no corresponding entry, the entry otherwise
+ * (Many things copied from https://www.kernel.org/doc/html/latest/core-api/rbtree.html)
  */
 static struct disagg_dma_entry *disagg_find_entry(dma_addr_t proxyDMA, size_t size)
 {
-    // right now this is one simple comparision as we only support one buffer
-    struct disagg_dma_entry *crt;
+    struct rb_node *crt_node = disagg_dma_allocator.entry_root.rb_node;
 
-    crt = &disagg_dma_allocator.entry;
+    while (crt_node) {
+	struct disagg_dma_entry *entry = container_of(crt_node, struct disagg_dma_entry, node);
 
-    if (proxyDMA >= crt->proxyDMA && proxyDMA + size <= crt->proxyDMA + size)
-	return crt;
+	if (proxyDMA < entry->proxyDMA)
+	    crt_node = crt_node->rb_left;
+	else if (proxyDMA + size > entry->proxyDMA + size)
+	    crt_node = crt_node->rb_right;
+	else 
+	    return entry;
+    }
 
     return NULL;
+}
+
+/*
+ * Inserts the entry into the rb-tree.
+ * Expects that the tree does not already contain an entry with this region.
+ * (Many things copied from https://www.kernel.org/doc/html/latest/core-api/rbtree.html)
+ */
+static void disagg_insert_entry(struct disagg_dma_entry *new_entry)
+{
+    struct rb_node **crt = &(disagg_dma_allocator.entry_root.rb_node);
+    struct rb_node *parent = NULL;
+
+    while (*crt) {
+	struct disagg_dma_entry *data = container_of(*crt, struct disagg_dma_entry, node);
+	parent = *crt;
+
+	// This simple compare is enough as we expect the entry to be unique
+	if (new_entry->proxyDMA < data->proxyDMA)
+	    crt = &((*crt)->rb_left);
+	else 
+	    crt = &((*crt)->rb_right);
+    }
+
+    rb_link_node(&new_entry->node, parent, crt);
+    rb_insert_color(&new_entry->node, &disagg_dma_allocator.entry_root);
 }
 
 bool disagg_is_dev(struct device *dev) 
@@ -82,7 +227,8 @@ int disagg_dma_allocator_init(u8 *key, int keylen, void *vmShmem_start, size_t d
 	pr_info("disagg_dma_allocator_init");
         disagg_dma_allocator.vmShmem_start = vmShmem_start;
 	disagg_dma_allocator.dma_area_size = dma_area_size;
-	disagg_dma_allocator.free = 1;
+	disagg_dma_allocator.entry_root = RB_ROOT;
+	INIT_LIST_HEAD(&disagg_dma_allocator.free_list);
 	spin_lock_init(&disagg_dma_allocator.lock);
 
 	disagg_dma_allocator.crypto.authsize = 16; // size of the authentication code
@@ -156,6 +302,16 @@ int disagg_dma_allocator_init(u8 *key, int keylen, void *vmShmem_start, size_t d
 	    pr_err("get_proxy_addresses failed\n");
 	    goto error_free_aead;
 	}
+
+	// Add the initial free memory region, which contains the whole free dma area
+	struct memory_region *first_region = kmalloc(sizeof(struct memory_region), GFP_KERNEL);
+	if (first_region == NULL) {
+	    pr_err("kmalloc failed");
+	    goto error_free_aead;
+	}
+	first_region->proxyDMA = disagg_dma_allocator.proxyDMA_start;
+	first_region->size = disagg_dma_allocator.dma_area_size;
+	list_add(&first_region->list, &disagg_dma_allocator.free_list);
 
 	return 0;
 error_free_aead:
@@ -239,6 +395,7 @@ static int disagg_dma_decrypt(void *from, void *to, size_t size)
 dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size_t offset, size_t size, enum dma_data_direction dir, unsigned long attrs) 
 {
     struct guest_message_header hdr;
+    struct disagg_dma_entry *new_entry;
     void *vmDMA = page_to_virt(page) + offset;
     void *vmShmem;
     dma_addr_t proxyDMA;
@@ -248,18 +405,24 @@ dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size
 
     if (disagg_dma_allocator.vmShmem_start == NULL) {
 	    pr_err("disagg_dma_map_page_attrs: shared memory not yet ready\n");
-	    goto error;
+	    return DMA_MAPPING_ERROR;
     }
 
     spin_lock(&disagg_dma_allocator.lock);
 
     // just a simple one page allocator
-    if (size > disagg_dma_allocator.dma_area_size || disagg_dma_allocator.free == 0) {
-	pr_err("disagg_dma_alloc: request not fullfillable");
+    if (find_free_region(size, &proxyDMA) != 0) {
+	pr_err("disagg_dma_map_page_attrs: request not fulfillable");
 	goto error;
     }
-    proxyDMA = disagg_dma_allocator.proxyDMA_start;
-    disagg_dma_allocator.free = 0;
+
+    new_entry = kmalloc(sizeof(struct disagg_dma_entry), GFP_KERNEL);
+
+    new_entry->vmDMA = vmDMA;
+    new_entry->proxyDMA = proxyDMA;
+    new_entry->size = size;
+
+    disagg_insert_entry(new_entry);
     // end of allocator
 
     vmShmem = proxyDMA_to_vmShmem(proxyDMA);
@@ -280,29 +443,35 @@ dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size
 
     pr_info("disagg_dma_map_page: dma_handle: 0x%llx\n", (uint64_t) proxyDMA);
 
-    disagg_dma_allocator.entry.vmDMA = vmDMA;
-    disagg_dma_allocator.entry.proxyDMA = proxyDMA;
-    disagg_dma_allocator.entry.size = size;
-
     return proxyDMA;
 
 error:
     spin_unlock(&disagg_dma_allocator.lock);
-    disagg_dma_allocator.free = 1;
     pr_info("disagg_dma_map_page failed\n");
     return DMA_MAPPING_ERROR;
 }
 
-void disagg_dma_unmap_page_attrs(struct device *dev, dma_addr_t addr, size_t size, enum dma_data_direction dir, unsigned long attrs)
+void disagg_dma_unmap_page_attrs(struct device *dev, dma_addr_t proxyDMA, size_t size, enum dma_data_direction dir, unsigned long attrs)
 {
+    struct disagg_dma_entry *entry;
+
     spin_lock(&disagg_dma_allocator.lock);
 
-    if (disagg_dma_allocator.free == 1) {
-	pr_err("disagg_dma_free: cannot free already freed buffer\n");
+    entry = disagg_find_entry(proxyDMA, size);
+
+    if (entry == NULL) {
+	pr_err("disagg_dma_free: cannot free non-existent dma buffer\n");
 	goto error;
     }
 
-    disagg_dma_allocator.free = 1;
+    rb_erase(&entry->node, &disagg_dma_allocator.entry_root);
+    kfree(entry);
+
+    add_region_to_free_list(proxyDMA, size); 
+
+    spin_unlock(&disagg_dma_allocator.lock);
+
+    return;
 
 error:
     spin_unlock(&disagg_dma_allocator.lock);
@@ -310,19 +479,22 @@ error:
 
 void disagg___dma_sync_single_for_cpu(struct device *dev, dma_addr_t proxyDMA, size_t size, enum dma_data_direction dir)
 {
-    struct disagg_dma_entry *entry = disagg_find_entry(proxyDMA, size);
-    if (entry == NULL) {
-	pr_info("disagg___dma_sync_single_for_cpu: no entry corresponding to the arguments\n");
-	return;
-    }
-
     struct guest_message_header hdr;
     u8 res;
-    u64 offset = proxyDMA - entry->proxyDMA;
-
-    pr_info("disagg___dma_sync_single_for_cpu\n");
+    u64 offset;
+    struct disagg_dma_entry *entry;
 
     spin_lock(&disagg_dma_allocator.lock);
+
+    entry = disagg_find_entry(proxyDMA, size);
+    if (entry == NULL) {
+	pr_info("disagg___dma_sync_single_for_cpu: no entry corresponding to the arguments\n");
+	goto error;
+    }
+
+    offset = proxyDMA - entry->proxyDMA;
+
+    pr_info("disagg___dma_sync_single_for_cpu\n");
 
     // Provide proxy with information where to encrypt the data inside shmem to
     hdr.address = (u64) proxyDMA;
@@ -339,23 +511,28 @@ void disagg___dma_sync_single_for_cpu(struct device *dev, dma_addr_t proxyDMA, s
     spin_unlock(&disagg_dma_allocator.lock);
 
     return;
+error:
+    spin_unlock(&disagg_dma_allocator.lock);
 }
 
 void disagg___dma_sync_single_for_device(struct device *dev, dma_addr_t proxyDMA, size_t size, enum dma_data_direction dir)
 {
-    struct disagg_dma_entry *entry = disagg_find_entry(proxyDMA, size);
+    struct guest_message_header hdr;
+    u8 res;
+    u64 offset;
+    struct disagg_dma_entry *entry;
+
+    pr_info("disagg___dma_sync_single_for_device\n");
+
+    spin_lock(&disagg_dma_allocator.lock);
+
+    entry = disagg_find_entry(proxyDMA, size);
     if (entry == NULL) {
 	pr_info("disagg___dma_sync_single_for_device: no entry corresponding to the arguments\n");
 	goto error;
     }
 
-    struct guest_message_header hdr;
-    u8 res;
-    u64 offset = proxyDMA - entry->proxyDMA;
-
-    pr_info("disagg___dma_sync_single_for_device\n");
-
-    spin_lock(&disagg_dma_allocator.lock);
+    offset = proxyDMA - entry->proxyDMA;
     
     // Encrypt data into virtual address space
     disagg_dma_encrypt(entry->vmDMA + offset, proxyDMA_to_vmShmem(proxyDMA) + offset, size);
@@ -378,3 +555,21 @@ error:
     pr_info("disagg___dma_sync_single_for_device failed\n");
 }
 
+bool disagg_test_check_dma_values(size_t nodes, size_t idx, size_t size_at_idx) {
+    if (list_count_nodes(&disagg_dma_allocator.free_list) != nodes) {
+	pr_err("disagg_test_check_dma_values: failed for nodes; expected: %lu, actual: %lu", nodes, list_count_nodes(&disagg_dma_allocator.free_list));
+       return false;	
+    }
+
+    struct list_head *pos;
+    for (pos = disagg_dma_allocator.free_list.next; idx > 0; --idx, pos = pos->next) { }
+
+    struct memory_region *region = list_entry(pos, struct memory_region, list);
+    if (region->size != size_at_idx) {
+	pr_err("disagg_test_check_dma_values: failed for size_at_idx; expected: %lu, actual: %lu", size_at_idx, region->size);
+       return false;	
+    }
+    
+    return true;
+}
+EXPORT_SYMBOL(disagg_test_check_dma_values);

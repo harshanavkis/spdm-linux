@@ -242,7 +242,7 @@ static int ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
     if (disagg_init_crypto(&ivs_dev_global->crypto, key, keylen) != 0) {
 	goto free_key;
     }
-    if (disagg_dma_allocator_init(key, keylen, ivs_dev->shmem + DMA_REGION_OFFSET, 1 << 12) != 0) {
+    if (disagg_dma_allocator_init(key, keylen, ivs_dev->shmem + DMA_REGION_OFFSET, DMA_SIZE) != 0) {
 	goto free_key;
     }
     kfree(key);

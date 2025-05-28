@@ -1,6 +1,7 @@
 #ifndef _MISC_QEMU_IVSHMEM_H_
 #define _MISC_QEMU_IVSHMEM_H_
 
+#define SHMEM_SIZE (1 << 20)  // 1 MB, adjust as needed
 #define READ_DOORBELL_OFFSET 0
 #define WRITE_DOORBELL_OFFSET 1
 #define DOORBELL_SIZE 1  // 1 byte for each doorbell

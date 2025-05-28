@@ -6,6 +6,7 @@
 #include <linux/kernel.h>
 #include <linux/device.h> // for dev_* debugging messages
 #include <asm-generic/io.h> // for iowrite*/ioread*
+#include <linux/mm.h> // for disagg_test_check_dma_values
 
 #define QEMU_VENDOR_ID 0x1234
 #define QEMU_EDU_DEVICE_ID 0x11e8
@@ -241,6 +242,94 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    kfree(actual);
 		    kfree(expected);
 		end:
+		    dma_unmap_single(&(dev->dev), dma_handle, SIZE, DMA_BIDIRECTIONAL);
+		}
+		{
+		    // Primarily tests the free_list allocator
+		    dev_info(&(dev->dev), "\n\nDMA Test 2\n");
+		    dma_addr_t dma_handle1, dma_handle2, dma_handle3, dma_handle4;
+		    size_t initial_dma_size = (1 << 20) - (1 << 12);
+		    enum { SIZE1 = 512, SIZE2 = 8193, SIZE3 = 256, SIZE4 = 5000 };
+		    void *actual1 = kmalloc(SIZE1, GFP_KERNEL);
+		    void *actual2 = kmalloc(SIZE2, GFP_KERNEL);
+		    void *actual3 = kmalloc(SIZE3, GFP_KERNEL);
+		    void *actual4 = kmalloc(SIZE4, GFP_KERNEL);
+
+		    memset(actual1, 0x11, SIZE1);
+		    memset(actual2, 0x22, SIZE2);
+		    memset(actual3, 0x33, SIZE2);
+		    memset(actual4, 0x44, SIZE2);
+
+		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size))
+			goto end2;
+		    
+		    // First page
+		    dma_handle1 = dma_map_single(&(dev->dev), actual1, SIZE1, DMA_BIDIRECTIONAL);
+		    if (dma_mapping_error(&(dev->dev), dma_handle1)) {
+			    goto end2;
+		    }
+		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size - (1 << 12)))
+			goto end2;
+
+		    // next 3 pages
+		    dma_handle2 = dma_map_single(&(dev->dev), actual2, SIZE2, DMA_BIDIRECTIONAL);
+		    if (dma_mapping_error(&(dev->dev), dma_handle2)) {
+			goto error_unmap1;
+		    }
+		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size - 4 * (1 << 12)))
+			goto end2;
+
+		    // another page
+		    dma_handle3 = dma_map_single(&(dev->dev), actual3, SIZE3, DMA_BIDIRECTIONAL);
+		    if (dma_mapping_error(&(dev->dev), dma_handle3)) {
+			goto error_unmap2;
+		    }
+		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size - 5 * (1 << 12)))
+			goto end2;
+
+
+		    // unmap the middle one
+		    dma_unmap_single(&(dev->dev), dma_handle2, SIZE2, DMA_BIDIRECTIONAL);
+		    if (!disagg_test_check_dma_values(2, 0, 3 * (1 << 12)) 
+			    || !disagg_test_check_dma_values(2, 1, initial_dma_size - 5 * (1 << 12)))
+			goto end2;
+
+		    // Map 2 pages
+		    dma_handle4 = dma_map_single(&(dev->dev), actual4, SIZE4, DMA_BIDIRECTIONAL);
+		    if (dma_mapping_error(&(dev->dev), dma_handle4)) {
+			goto error_unmap2;
+		    }
+		    if (!disagg_test_check_dma_values(2, 0, 1 * (1 << 12)) 
+			    || !disagg_test_check_dma_values(2, 1, initial_dma_size - 5 * (1 << 12)))
+			goto end2;
+
+		    // Map 3 pages again
+		    dma_handle2 = dma_map_single(&(dev->dev), actual2, SIZE2, DMA_BIDIRECTIONAL);
+		    if (dma_mapping_error(&(dev->dev), dma_handle2)) {
+			goto error_unmap2;
+		    }
+		    if (!disagg_test_check_dma_values(2, 0, 1 * (1 << 12)) 
+			    || !disagg_test_check_dma_values(2, 1, initial_dma_size - 8 * (1 << 12)))
+			goto end2;
+
+		    dma_unmap_single(&(dev->dev), dma_handle1, SIZE1, DMA_BIDIRECTIONAL);
+		    dma_unmap_single(&(dev->dev), dma_handle2, SIZE2, DMA_BIDIRECTIONAL);
+		    dma_unmap_single(&(dev->dev), dma_handle3, SIZE3, DMA_BIDIRECTIONAL);
+		    dma_unmap_single(&(dev->dev), dma_handle4, SIZE4, DMA_BIDIRECTIONAL);
+		    goto end2;
+
+		    goto error_unmap3; // to prevent warning
+		error_unmap3:
+		    dma_unmap_single(&(dev->dev), dma_handle3, SIZE3, DMA_BIDIRECTIONAL);
+		error_unmap2:
+		    dma_unmap_single(&(dev->dev), dma_handle2, SIZE2, DMA_BIDIRECTIONAL);
+		error_unmap1:
+		    dma_unmap_single(&(dev->dev), dma_handle1, SIZE1, DMA_BIDIRECTIONAL);
+		end2:	
+		    kfree(actual1);
+		    kfree(actual2);
+		    kfree(actual3);
+		    kfree(actual4);
 		}
 
 	}
