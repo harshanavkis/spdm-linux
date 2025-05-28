@@ -4,8 +4,6 @@
 #include <linux/scatterlist.h>
 #include <linux/pci.h> // for dev_is_pci
 
-#define CONFIG_DISAGG_DEBUG_DMA_SEC
-
 disagg_dma_allocator_t disagg_dma_allocator;
 
 #ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
@@ -65,6 +63,7 @@ static void add_region_to_free_list(u64 proxyDMA, size_t size) {
 	if (next_region->proxyDMA == proxyDMA + size) {
 	    if (set == 1) {
 		prev_region->size += next_region->size;
+		list_del(next);
 		kfree(next_region);
 	    } else {
 		next_region->size += size;
@@ -401,7 +400,9 @@ dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size
     dma_addr_t proxyDMA;
     u8 resp;
 
+#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
     pr_info("disagg_dma_map_page_attrs\n");
+#endif
 
     if (disagg_dma_allocator.vmShmem_start == NULL) {
 	    pr_err("disagg_dma_map_page_attrs: shared memory not yet ready\n");
@@ -441,7 +442,9 @@ dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size
 
     spin_unlock(&disagg_dma_allocator.lock);
 
+#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
     pr_info("disagg_dma_map_page: dma_handle: 0x%llx\n", (uint64_t) proxyDMA);
+#endif
 
     return proxyDMA;
 
@@ -494,7 +497,9 @@ void disagg___dma_sync_single_for_cpu(struct device *dev, dma_addr_t proxyDMA, s
 
     offset = proxyDMA - entry->proxyDMA;
 
+#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
     pr_info("disagg___dma_sync_single_for_cpu\n");
+#endif
 
     // Provide proxy with information where to encrypt the data inside shmem to
     hdr.address = (u64) proxyDMA;
@@ -522,7 +527,9 @@ void disagg___dma_sync_single_for_device(struct device *dev, dma_addr_t proxyDMA
     u64 offset;
     struct disagg_dma_entry *entry;
 
+#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
     pr_info("disagg___dma_sync_single_for_device\n");
+#endif
 
     spin_lock(&disagg_dma_allocator.lock);
 

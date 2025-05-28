@@ -13,6 +13,9 @@ config DISAGG_DEBUG_MMIO_SEC
 config DISAGG_DEBUG_MMIO
 	tristate "DISAGG: debug message for mmio communication"
 
+config DISAGG_DEBUG_DMA_SEC
+	tristate "DISAGG: deubgg messages for dma communication"
+
 
 
 source "scripts/Kconfig.include"

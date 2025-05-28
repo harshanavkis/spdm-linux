@@ -159,7 +159,6 @@ dma_addr_t dma_map_page_attrs(struct device *dev, struct page *page,
 		return DMA_MAPPING_ERROR;
 
 	if (unlikely(disagg_is_dev(dev))) {
-		pr_info("dma_map_page_attrs: QEMU EDU tries DMA map\n");
 		addr = disagg_dma_map_page_attrs(dev, page, offset, size, dir, attrs);
 	} else if (dma_map_direct(dev, ops) ||
 	    arch_dma_map_page_direct(dev, page_to_phys(page) + offset + size))
@@ -181,7 +180,6 @@ void dma_unmap_page_attrs(struct device *dev, dma_addr_t addr, size_t size,
 	BUG_ON(!valid_dma_direction(dir));
 
 	if (unlikely(disagg_is_dev(dev))) {
-		pr_info("dma_map_page_attrs: QEMU EDU tries DMA unmap\n");
 		disagg_dma_unmap_page_attrs(dev, addr, size, dir, attrs);
 	} else if (dma_map_direct(dev, ops) ||
 	    arch_dma_unmap_page_direct(dev, addr + size))

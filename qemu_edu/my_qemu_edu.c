@@ -257,8 +257,8 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 		    memset(actual1, 0x11, SIZE1);
 		    memset(actual2, 0x22, SIZE2);
-		    memset(actual3, 0x33, SIZE2);
-		    memset(actual4, 0x44, SIZE2);
+		    memset(actual3, 0x33, SIZE3);
+		    memset(actual4, 0x44, SIZE4);
 
 		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size))
 			goto end2;
@@ -274,7 +274,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    // next 3 pages
 		    dma_handle2 = dma_map_single(&(dev->dev), actual2, SIZE2, DMA_BIDIRECTIONAL);
 		    if (dma_mapping_error(&(dev->dev), dma_handle2)) {
-			goto error_unmap1;
+			goto end2;
 		    }
 		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size - 4 * (1 << 12)))
 			goto end2;
@@ -282,7 +282,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    // another page
 		    dma_handle3 = dma_map_single(&(dev->dev), actual3, SIZE3, DMA_BIDIRECTIONAL);
 		    if (dma_mapping_error(&(dev->dev), dma_handle3)) {
-			goto error_unmap2;
+			goto end2;
 		    }
 		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size - 5 * (1 << 12)))
 			goto end2;
@@ -297,7 +297,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    // Map 2 pages
 		    dma_handle4 = dma_map_single(&(dev->dev), actual4, SIZE4, DMA_BIDIRECTIONAL);
 		    if (dma_mapping_error(&(dev->dev), dma_handle4)) {
-			goto error_unmap2;
+			goto end2;
 		    }
 		    if (!disagg_test_check_dma_values(2, 0, 1 * (1 << 12)) 
 			    || !disagg_test_check_dma_values(2, 1, initial_dma_size - 5 * (1 << 12)))
@@ -306,7 +306,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    // Map 3 pages again
 		    dma_handle2 = dma_map_single(&(dev->dev), actual2, SIZE2, DMA_BIDIRECTIONAL);
 		    if (dma_mapping_error(&(dev->dev), dma_handle2)) {
-			goto error_unmap2;
+			goto end2;
 		    }
 		    if (!disagg_test_check_dma_values(2, 0, 1 * (1 << 12)) 
 			    || !disagg_test_check_dma_values(2, 1, initial_dma_size - 8 * (1 << 12)))
@@ -316,16 +316,16 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    dma_unmap_single(&(dev->dev), dma_handle2, SIZE2, DMA_BIDIRECTIONAL);
 		    dma_unmap_single(&(dev->dev), dma_handle3, SIZE3, DMA_BIDIRECTIONAL);
 		    dma_unmap_single(&(dev->dev), dma_handle4, SIZE4, DMA_BIDIRECTIONAL);
-		    goto end2;
 
-		    goto error_unmap3; // to prevent warning
-		error_unmap3:
-		    dma_unmap_single(&(dev->dev), dma_handle3, SIZE3, DMA_BIDIRECTIONAL);
-		error_unmap2:
-		    dma_unmap_single(&(dev->dev), dma_handle2, SIZE2, DMA_BIDIRECTIONAL);
-		error_unmap1:
-		    dma_unmap_single(&(dev->dev), dma_handle1, SIZE1, DMA_BIDIRECTIONAL);
+		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size))
+			goto end2;
+
+		    pr_info("DMA test 2 passed");
+		    goto end2_good;
+
 		end2:	
+		    pr_info("DMA test 2 failed");
+		end2_good:
 		    kfree(actual1);
 		    kfree(actual2);
 		    kfree(actual3);
