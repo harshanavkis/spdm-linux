@@ -148,7 +148,7 @@ static struct disagg_dma_entry *disagg_find_entry(dma_addr_t proxyDMA, size_t si
 
 	if (proxyDMA < entry->proxyDMA)
 	    crt_node = crt_node->rb_left;
-	else if (proxyDMA + size > entry->proxyDMA + size)
+	else if (proxyDMA + size > entry->proxyDMA + entry->size)
 	    crt_node = crt_node->rb_right;
 	else 
 	    return entry;
@@ -511,7 +511,7 @@ void disagg___dma_sync_single_for_cpu(struct device *dev, dma_addr_t proxyDMA, s
     ivshmem_read(&res, sizeof(res), 0);
 
     // Decrypt data into virtual address space
-    disagg_dma_decrypt(proxyDMA_to_vmShmem(proxyDMA) + offset, entry->vmDMA + offset, size);
+    disagg_dma_decrypt(proxyDMA_to_vmShmem(proxyDMA), entry->vmDMA + offset, size);
 
     spin_unlock(&disagg_dma_allocator.lock);
 
@@ -542,7 +542,7 @@ void disagg___dma_sync_single_for_device(struct device *dev, dma_addr_t proxyDMA
     offset = proxyDMA - entry->proxyDMA;
     
     // Encrypt data into virtual address space
-    disagg_dma_encrypt(entry->vmDMA + offset, proxyDMA_to_vmShmem(proxyDMA) + offset, size);
+    disagg_dma_encrypt(entry->vmDMA + offset, proxyDMA_to_vmShmem(proxyDMA), size);
 
     // Give proxy source address of decrypted data in shmem
     hdr.address = (u64) proxyDMA;

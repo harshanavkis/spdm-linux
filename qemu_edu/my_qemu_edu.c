@@ -184,7 +184,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		 * - https://stackoverflow.com/questions/34188369/easiest-way-to-use-dma-in-linux
 		 */
 		{
-		    dev_info(&(dev->dev), "\n\nDMA Test 1\n");
+		    dev_info(&(dev->dev), "DMA Test 1\n");
 		    dma_addr_t dma_handle;
 		    enum { SIZE = 256 };
 		    void *actual = kmalloc(SIZE, GFP_KERNEL);
@@ -197,8 +197,6 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 			dev_info(&(dev->dev), "my_pci_probe: dma_alloc_coherent failed\n");
 			return 0;
 		    }
-
-		    dev_info(&(dev->dev), "dma_handle = %px\n", (void *) dma_handle);
 
 		    // Proide device with information about the DMA transfer
 		    writeq((u64)dma_handle, mmio + IO_DMA_SRC);
@@ -246,7 +244,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		}
 		{
 		    // Primarily tests the free_list allocator
-		    dev_info(&(dev->dev), "\n\nDMA Test 2\n");
+		    dev_info(&(dev->dev), "DMA Test 2\n");
 		    dma_addr_t dma_handle1, dma_handle2, dma_handle3, dma_handle4;
 		    size_t initial_dma_size = (1 << 20) - (1 << 12);
 		    enum { SIZE1 = 512, SIZE2 = 8193, SIZE3 = 256, SIZE4 = 5000 };
@@ -331,7 +329,197 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    kfree(actual3);
 		    kfree(actual4);
 		}
+		{
+		    dev_info(&(dev->dev), "DMA Test 3\n");
+		    dma_addr_t dma_handle1, dma_handle2;
+		    enum { SIZE1 = 2048, SIZE2 = 2048 };
+		    void *actual1 = kmalloc(SIZE1, GFP_KERNEL);
+		    void *actual2 = kmalloc(SIZE2, GFP_KERNEL);
+		    void *expected = kmalloc(SIZE1, GFP_KERNEL);
 
+		    memset(actual1, 0x11, SIZE1);
+		    memset(actual2, 0x22, SIZE2);
+		    
+		    dma_handle1 = dma_map_single(&(dev->dev), actual1, SIZE1, DMA_BIDIRECTIONAL);
+		    if (dma_mapping_error(&(dev->dev), dma_handle1)) {
+			pr_info("DMA test 3 failed with mapping error 1");
+			goto kfree_3;
+		    }
+		    dma_handle2 = dma_map_single(&(dev->dev), actual2, SIZE2, DMA_BIDIRECTIONAL);
+		    if (dma_mapping_error(&(dev->dev), dma_handle2)) {
+			pr_info("DMA test 3 failed with mapping error 2");
+			goto unmap_3_1;
+		    }
+
+		    // Write first buffer to device's dma buffer 
+		    writeq((u64)dma_handle1, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE1, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    // Write second buffer to device's dma buffer 
+		    writeq((u64)dma_handle2, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE + SIZE1, mmio + IO_DMA_DST);
+		    writeq(SIZE2, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    // Let device write 256 bytes of second buffer into first
+		    writeq(DMA_BASE + SIZE1, mmio + IO_DMA_SRC);
+		    writeq(dma_handle1 + 512, mmio + IO_DMA_DST);
+		    writeq(256, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    dma_sync_single_for_cpu(&(dev->dev), dma_handle1, SIZE1, DMA_BIDIRECTIONAL);
+
+		    // Check if buffer 1 was updated
+		    memset(expected, 0x11, SIZE1);
+		    memset(expected + 512, 0x22, 256);
+		    if (memcmp(expected, actual1, SIZE1) != 0) {
+			pr_info("first partial buffer update failed");
+			goto fail3;
+		    }
+
+		    // Update whole buffer 2, but do only a partial sync
+		    memset(actual2, 0xff, SIZE2);
+		    dma_sync_single_for_device(&(dev->dev), dma_handle2 + 1024, 4, DMA_BIDIRECTIONAL);
+
+		    writeq((u64)dma_handle2, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE + SIZE1, mmio + IO_DMA_DST);
+		    writeq(SIZE2, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    writeq(DMA_BASE + SIZE1, mmio + IO_DMA_SRC);
+		    writeq(dma_handle1, mmio + IO_DMA_DST);
+		    writeq(SIZE2, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    dma_sync_single_for_cpu(&(dev->dev), dma_handle1, SIZE1, DMA_BIDIRECTIONAL);
+
+		    memset(expected, 0x22, SIZE2);
+		    memset(expected + 1024, 0xff, 4);
+		    if (memcmp(expected, actual1, SIZE2) != 0) {
+			pr_info("second partial buffer update failed");
+			goto fail3;
+		    }
+
+		    // test partical cpu sync
+		    memset(actual1, 0xee, SIZE1);
+		    dma_sync_single_for_device(&(dev->dev), dma_handle1, SIZE1, DMA_BIDIRECTIONAL);
+
+		    memset(actual2, 0xbb, SIZE2);
+		    dma_sync_single_for_device(&(dev->dev), dma_handle2, SIZE2, DMA_BIDIRECTIONAL);
+
+		    writeq((u64)dma_handle1, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE1, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    writeq(DMA_BASE, mmio + IO_DMA_SRC);
+		    writeq(dma_handle2, mmio + IO_DMA_DST);
+		    writeq(SIZE2, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+		    
+		    dma_sync_single_for_cpu(&(dev->dev), dma_handle2 + 43, 11, DMA_BIDIRECTIONAL);
+
+		    memset(expected, 0xbb, SIZE2);
+		    memset(expected + 43, 0xee, 11);
+		    if (memcmp(expected, actual2, SIZE2) != 0) {
+			pr_info("third partial buffer update failed");
+			goto fail3;
+		    }
+
+
+		    pr_info("DMA test 3 passed");
+		    goto unmap_3;
+
+		fail3:
+		    pr_info("DMA test 3 failed");
+		unmap_3:
+		    dma_unmap_single(&(dev->dev), dma_handle2, SIZE2, DMA_BIDIRECTIONAL);
+		unmap_3_1:
+		    dma_unmap_single(&(dev->dev), dma_handle1, SIZE1, DMA_BIDIRECTIONAL);
+		kfree_3:
+		    kfree(actual2);
+		    kfree(actual1);
+		    kfree(expected);
+		}
+		{
+		    // test non-page alligned mappings
+		    dev_info(&(dev->dev), "DMA Test 4\n");
+		    dma_addr_t dma_handle1, dma_handle2;
+		    enum { SIZE1 = 2048, SIZE2 = 2048 };
+		    void *actual1 = kmalloc(SIZE1, GFP_KERNEL);
+		    void *actual2 = kmalloc(SIZE2, GFP_KERNEL);
+		    void *expected = kmalloc(SIZE1, GFP_KERNEL);
+
+		    memset(actual1, 0x11, SIZE1);
+		    memset(actual1 + 30, 0xdd, 20);
+		    memset(actual2, 0x22, SIZE2);
+		    memset(actual2 + 1500, 0xaa, 13);
+
+		    dma_handle1 = dma_map_single(&(dev->dev), actual1 + 30, SIZE1 - 30, DMA_BIDIRECTIONAL);
+		    if (dma_mapping_error(&(dev->dev), dma_handle1)) {
+			pr_info("DMA test 4 failed with mapping error 1");
+			goto kfree_4;
+		    }
+		    dma_handle2 = dma_map_single(&(dev->dev), actual2 + 1500, SIZE2 - 1500, DMA_BIDIRECTIONAL);
+		    if (dma_mapping_error(&(dev->dev), dma_handle2)) {
+			pr_info("DMA test 4 failed with mapping error 2");
+			goto unmap_4_1;
+		    }
+
+		    // Change buffer outside of mapping and check if it affects DMA
+		    memset(actual1 + 30, 0xab, 5);
+		    dma_sync_single_for_device(&(dev->dev), dma_handle1, SIZE1 - 30, DMA_BIDIRECTIONAL);
+
+		    writeq((u64)dma_handle1, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(100, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    writeq(DMA_BASE, mmio + IO_DMA_SRC);
+		    writeq(dma_handle2 + 7, mmio + IO_DMA_DST);
+		    writeq(50, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    dma_sync_single_for_cpu(&(dev->dev), dma_handle2, SIZE2 - 1500, DMA_BIDIRECTIONAL);
+
+		    // Results in a chaotic memory buffer
+		    memset(expected, 0x22, SIZE2);
+		    memset(expected + 1500, 0xaa, 13);
+		    memset(expected + 1500 + 7, 0x11, 50);
+		    memset(expected + 1500 + 7, 0xdd, 20);
+		    memset(expected + 1500 + 7, 0xab, 5);
+		    if (memcmp(expected, actual2, SIZE2) != 0) {
+			pr_info("chaotic memory buffer update failed");
+			goto fail4;
+		    }
+
+
+		    pr_info("DMA test 4 passed");
+		    goto unmap_4;
+		    goto fail4;
+
+		fail4:
+		    pr_info("DMA test 4 failed");
+		unmap_4:
+		    dma_unmap_single(&(dev->dev), dma_handle2, SIZE2 - 1500, DMA_BIDIRECTIONAL);
+		unmap_4_1:
+		    dma_unmap_single(&(dev->dev), dma_handle1, SIZE1 - 30, DMA_BIDIRECTIONAL);
+		kfree_4:
+		    kfree(actual2);
+		    kfree(actual1);
+		    kfree(expected);
+		}
 	}
     return 0;
 
