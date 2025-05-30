@@ -245,18 +245,20 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		{
 		    // Primarily tests the free_list allocator
 		    dev_info(&(dev->dev), "DMA Test 2\n");
-		    dma_addr_t dma_handle1, dma_handle2, dma_handle3, dma_handle4;
+		    dma_addr_t dma_handle1, dma_handle2, dma_handle3, dma_handle4, dma_handle5;
 		    size_t initial_dma_size = (1 << 20) - (1 << 12);
-		    enum { SIZE1 = 512, SIZE2 = 8193, SIZE3 = 256, SIZE4 = 5000 };
+		    enum { SIZE1 = 512, SIZE2 = 8193, SIZE3 = 256, SIZE4 = 5000, SIZE5 = 4090 };
 		    void *actual1 = kmalloc(SIZE1, GFP_KERNEL);
 		    void *actual2 = kmalloc(SIZE2, GFP_KERNEL);
 		    void *actual3 = kmalloc(SIZE3, GFP_KERNEL);
 		    void *actual4 = kmalloc(SIZE4, GFP_KERNEL);
+		    void *actual5 = kmalloc(SIZE5, GFP_KERNEL);
 
 		    memset(actual1, 0x11, SIZE1);
 		    memset(actual2, 0x22, SIZE2);
 		    memset(actual3, 0x33, SIZE3);
 		    memset(actual4, 0x44, SIZE4);
+		    memset(actual5, 0x55, SIZE5);
 
 		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size))
 			goto end2;
@@ -318,6 +320,17 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size))
 			goto end2;
 
+		    // Check if authsize is considered during allocation
+		    dma_handle5 = dma_map_single(&(dev->dev), actual5, SIZE5, DMA_BIDIRECTIONAL);
+		    if (dma_mapping_error(&(dev->dev), dma_handle5)) {
+			    goto end2;
+		    }
+		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size - 2 * (1 << 12)))
+			goto end2;
+		    dma_unmap_single(&(dev->dev), dma_handle5, SIZE5, DMA_BIDIRECTIONAL);
+		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size))
+			goto end2;
+
 		    pr_info("DMA test 2 passed");
 		    goto end2_good;
 
@@ -328,6 +341,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    kfree(actual2);
 		    kfree(actual3);
 		    kfree(actual4);
+		    kfree(actual5);
 		}
 		{
 		    dev_info(&(dev->dev), "DMA Test 3\n");

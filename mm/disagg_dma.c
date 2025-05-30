@@ -412,7 +412,7 @@ dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size
     spin_lock(&disagg_dma_allocator.lock);
 
     // just a simple one page allocator
-    if (find_free_region(size, &proxyDMA) != 0) {
+    if (find_free_region(size + disagg_dma_allocator.crypto.authsize, &proxyDMA) != 0) {
 	pr_err("disagg_dma_map_page_attrs: request not fulfillable");
 	goto error;
     }
@@ -470,7 +470,7 @@ void disagg_dma_unmap_page_attrs(struct device *dev, dma_addr_t proxyDMA, size_t
     rb_erase(&entry->node, &disagg_dma_allocator.entry_root);
     kfree(entry);
 
-    add_region_to_free_list(proxyDMA, size); 
+    add_region_to_free_list(proxyDMA, size + disagg_dma_allocator.crypto.authsize); 
 
     spin_unlock(&disagg_dma_allocator.lock);
 
