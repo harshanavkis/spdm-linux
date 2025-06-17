@@ -10,6 +10,7 @@
 #include <linux/export.h>
 
 DEFINE_PER_CPU(uint8_t, ioremap_disagg_device_flags) = 0;
+DEFINE_PER_CPU(int, ioremap_disagg_bar_nr) = -1;
 
 /**
  * pci_iomap_range - create a virtual mapping cookie for a PCI BAR
@@ -51,6 +52,7 @@ void __iomem *pci_iomap_range(struct pci_dev *dev,
 	}
 
 	this_cpu_write(ioremap_disagg_device_flags, disagg_device_flags);
+	this_cpu_write(ioremap_disagg_bar_nr, bar);
 
 	if (len <= offset || !start)
 		return NULL;

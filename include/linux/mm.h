@@ -109,6 +109,15 @@ void disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code
  */
 #define DISAGG_DEV_OP_ADDR_INIT 6
 
+/*
+ * @brief VM sends the pyhsical address of its mapped region (EDU BAR)
+ * Only done once during initialization
+ * Done in two sends to get BAR number and then region
+ * 1st message: address == physical address 
+ * 2nd message: bar nr (no guest_message_header) size = 1B
+ */
+#define DISAGG_DEV_OP_BAR_PHYS 7
+
 /* 
  * Disagg device DMA (definitions in mm/disagg_dma.c)
  */

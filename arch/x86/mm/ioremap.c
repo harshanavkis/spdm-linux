@@ -28,6 +28,8 @@
 #include <asm/memtype.h>
 #include <asm/setup.h>
 
+#include <misc/qemu_ivshmem.h> // for ivshmem_write
+
 #include "physaddr.h"
 
 /*
@@ -300,6 +302,26 @@ void disagg_dev_mark_page_not_present(unsigned long start_addr, size_t size)
 }
 
 /*
+ * Send information about bar physical address to the remote device
+ */
+static void disagg_send_physical_address(int disagg_bar_nr, uint64_t phys_addr) {
+    struct guest_message_header hdr;
+    u8 bar = (uint8_t) disagg_bar_nr;
+    u8 *resp = kmalloc(sizeof(void *) * 2, GFP_KERNEL);
+    if (resp == NULL) {
+	pr_err("kmalloc_failed");
+	return;
+    }
+
+    hdr.address = phys_addr;
+    hdr.operation = DISAGG_DEV_OP_BAR_PHYS;
+    hdr.length = sizeof(phys_addr);
+    ivshmem_write(&hdr, sizeof(hdr), 0);
+
+    ivshmem_write(&bar, sizeof(bar), 0);
+}
+
+/*
  * Remap an arbitrary physical address space into the kernel virtual
  * address space. It transparently creates kernel huge I/O mapping when
  * the physical address is aligned by a huge page size (1GB or 2MB) and
@@ -445,15 +467,19 @@ __ioremap_caller(resource_size_t phys_addr, unsigned long size,
 		pr_warn("caller %pS mapping multiple BARs\n", caller);
 	
 	uint8_t disagg_device_flags = this_cpu_read(ioremap_disagg_device_flags);
-	pr_info("__ioremap_caller: disagg device flag is: %u\n", disagg_device_flags);
+	int disagg_bar_nr = this_cpu_read(ioremap_disagg_bar_nr);
+	pr_info("__ioremap_caller: disagg device flag is: %u, bar nr is: %d\n", disagg_device_flags, disagg_bar_nr);
 
 	if (disagg_device_flags)
 	{
+		pr_info("bar: pyhs_adr: %llx, size: %ld\n", phys_addr, size);
 		add_disagg_dev_mmio_range((unsigned long)ret_addr, (unsigned long)ret_addr + size - 1);
 		disagg_register_ioremap((unsigned long) ret_addr, phys_addr, size);
+		disagg_send_physical_address(disagg_bar_nr, phys_addr);
 		disagg_dev_mark_page_not_present((unsigned long) ret_addr, size);
 	}
 	this_cpu_write(ioremap_disagg_device_flags, 0);
+	this_cpu_write(ioremap_disagg_bar_nr, -1);
 
 	return ret_addr;
 err_free_area:
