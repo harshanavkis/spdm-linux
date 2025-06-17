@@ -148,8 +148,9 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	}
 
 	dma_unmap_single(&(dev->dev), dma_handle, dma_size, DMA_BIDIRECTIONAL);
+	kfree(actual);
 
-	pr_info("time measured: %llu", (u64) ktime_to_ns(end) - (u64) ktime_to_ns(start));
+	pr_info("time measured: %lu;%llu end", dma_size, (u64) ktime_to_ns(end) - (u64) ktime_to_ns(start));
     }
 
     return 0;
