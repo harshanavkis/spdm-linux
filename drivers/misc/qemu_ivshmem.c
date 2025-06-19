@@ -106,8 +106,9 @@ static int disagg_mmio_decrypt(struct disagg_crypto *crypto, u8 *buf, size_t cou
     return 0;
 }
 
-static int disagg_init_crypto(struct disagg_crypto *crypto, u8* key, int keylen)
+int disagg_init_crypto(u8* key, int keylen)
 {
+    struct disagg_crypto *crypto = &ivs_dev_global->crypto;
     struct crypto_aead *tfm = NULL;
     struct aead_request *req = NULL;
     u8 *iv;
@@ -120,6 +121,8 @@ static int disagg_init_crypto(struct disagg_crypto *crypto, u8* key, int keylen)
     if (IS_ERR(tfm)) {
 	pr_err("disagg_init_crypto: AES/GCM alloc_aead failed\n");
 	return 1;
+    } else {
+	    pr_info("disagg_init_crypto: gcm(aes): name: %s, driver_name: %s\n", tfm->base.__crt_alg->cra_name, tfm->base.__crt_alg->cra_driver_name);
     }
 
     // Init IV
@@ -231,26 +234,11 @@ static int ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
     pr_info("ivshmem: Shared memory size: %zu bytes\n", ivs_dev->shmem_size);
 
-    // Initialize the GCM AEAD objects
-    int keylen = 32;
-    u8 *key = kmalloc(keylen, GFP_KERNEL);
-    if (!key) {
-	err = -ENOMEM;
-	goto release_regions;
-    }
-    memset(key, 0x00, keylen); // init with dummy value
-    if (disagg_init_crypto(&ivs_dev_global->crypto, key, keylen) != 0) {
-	goto free_key;
-    }
-    if (disagg_dma_allocator_init(key, keylen, ivs_dev->shmem + DMA_REGION_OFFSET, DMA_SIZE) != 0) {
-	goto free_key;
-    }
-    kfree(key);
+    disagg_dma_allocator.vmShmem_start = ivs_dev->shmem + DMA_REGION_OFFSET;
+    disagg_dma_allocator.dma_area_size = DMA_SIZE;
 
     return 0;
 
-free_key:
-    kfree(key);
 release_regions:
     pci_release_regions(pdev);
 disable_device:

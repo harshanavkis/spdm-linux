@@ -13,5 +13,6 @@
 ssize_t ivshmem_read(void *buf, size_t count, loff_t offset);
 ssize_t ivshmem_write(const void *buf, size_t count, loff_t offset);
 ssize_t ivshmem_read_nonblocking(void *buf, size_t count, loff_t offset);
+int disagg_init_crypto(u8* key, int keylen);
 
 #endif /* _MISC_QEMU_IVSHMEM_H_ */

@@ -155,8 +155,8 @@ extern disagg_dma_allocator_t disagg_dma_allocator;
 dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size_t offset, size_t size, enum dma_data_direction dir, unsigned long attrs);
 // hook into dma_unmap_page_attrs
 void disagg_dma_unmap_page_attrs(struct device *dev, dma_addr_t addr, size_t size, enum dma_data_direction dir, unsigned long attrs);
-// Called when probing qemu_ivshmem
-int disagg_dma_allocator_init(u8 *key, int keylen, void *vmShmem_start, size_t dma_area_size);
+// Called when with late_initcall 
+int disagg_dma_allocator_init(u8 *key, int keylen);
 // hook into __dma_sync_single_for_cpu
 void disagg___dma_sync_single_for_cpu(struct device *dev, dma_addr_t addr, size_t size, enum dma_data_direction dir);
 // hook into __dma_sync_single_for_device
