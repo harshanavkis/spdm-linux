@@ -221,11 +221,9 @@ static int obtain_proxy_address(void) {
     return 0;
 }
 
-int disagg_dma_allocator_init(u8 *key, int keylen, void *vmShmem_start, size_t dma_area_size)
+int disagg_dma_allocator_init(u8 *key, int keylen)
 {
 	pr_info("disagg_dma_allocator_init");
-        disagg_dma_allocator.vmShmem_start = vmShmem_start;
-	disagg_dma_allocator.dma_area_size = dma_area_size;
 	disagg_dma_allocator.entry_root = RB_ROOT;
 	INIT_LIST_HEAD(&disagg_dma_allocator.free_list);
 	spin_lock_init(&disagg_dma_allocator.lock);
@@ -242,6 +240,8 @@ int disagg_dma_allocator_init(u8 *key, int keylen, void *vmShmem_start, size_t d
 	if (IS_ERR(tfm)) {
 	    pr_err("disagg_dma_allocator_init: AES/GCM alloc_aead failed\n");
 	    return 1;
+	} else {
+	    pr_info("disagg_dma_allocator_init: gcm(aes): name: %s, driver_name: %s\n", tfm->base.__crt_alg->cra_name, tfm->base.__crt_alg->cra_driver_name);
 	}
 
 	// Init IV
@@ -428,8 +428,16 @@ dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size
 
     vmShmem = proxyDMA_to_vmShmem(proxyDMA);
 
-    // Encrypt the data to shmem
-    disagg_dma_encrypt(vmDMA, vmShmem, size);
+    {
+	ktime_t start, end;
+
+	start = ktime_get();
+	// Encrypt the data to shmem
+	disagg_dma_encrypt(vmDMA, vmShmem, size);
+	end = ktime_get();
+
+	pr_info("time dma_encrypt measured: %lu;%llu end encrypt", size, (u64) ktime_to_ns(end) - (u64) ktime_to_ns(start));
+    }
 
     // Provide proxy with information where the encrypted data is placed into shmem
     hdr.address = proxyDMA;
@@ -510,8 +518,16 @@ void disagg___dma_sync_single_for_cpu(struct device *dev, dma_addr_t proxyDMA, s
     // Confirm completion of encryption
     ivshmem_read(&res, sizeof(res), 0);
 
-    // Decrypt data into virtual address space
-    disagg_dma_decrypt(proxyDMA_to_vmShmem(proxyDMA), entry->vmDMA + offset, size);
+    {
+	ktime_t start, end;
+
+	start = ktime_get();
+	// Decrypt data into virtual address space
+	disagg_dma_decrypt(proxyDMA_to_vmShmem(proxyDMA), entry->vmDMA + offset, size);
+	end = ktime_get();
+
+	pr_info("time dma_decrypt measured: %lu;%llu end decrypt", size, (u64) ktime_to_ns(end) - (u64) ktime_to_ns(start));
+    }
 
     spin_unlock(&disagg_dma_allocator.lock);
 
@@ -580,3 +596,29 @@ bool disagg_test_check_dma_values(size_t nodes, size_t idx, size_t size_at_idx) 
     return true;
 }
 EXPORT_SYMBOL(disagg_test_check_dma_values);
+
+static int __init disagg_crypto_objects_init(void)
+{
+    // Initialize the GCM AEAD objects
+    int keylen = 32;
+    u8 *key = kmalloc(keylen, GFP_KERNEL);
+    if (!key) {
+	pr_err("disagg_crypto_objects_init: kmalloc failed\n");
+	return 1;
+    }
+    memset(key, 0x00, keylen); // init with dummy value
+    if (disagg_init_crypto(key, keylen) != 0) {
+	goto free_key;
+    }
+    if (disagg_dma_allocator_init(key, keylen) != 0) {
+	goto free_key;
+    }
+
+    kfree(key);
+
+    return 0;
+free_key:
+    kfree(key);
+    return 1;
+}
+late_initcall(disagg_crypto_objects_init);
