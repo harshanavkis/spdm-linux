@@ -61,7 +61,7 @@ static struct file_operations my_fops = {
 };
 
 /* Irq */
-
+/*
 static irqreturn_t my_irq_handler(int irq, void *dev)
 {
     int devi;
@@ -80,6 +80,7 @@ static irqreturn_t my_irq_handler(int irq, void *dev)
     }
     return ret;
 }
+*/
 
 /* Pci specific code */
 
@@ -106,6 +107,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
     /* IRQ setup */
     pci_set_master(dev);
 
+/*
     if (pci_alloc_irq_vectors(dev, 1, 1, PCI_IRQ_MSI) < 0) {
 	dev_err(&(dev->dev), "Error: pci_alloc_irq_vectors failed\n");
 	goto error_irq_vectors;
@@ -117,6 +119,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	dev_err(&(dev->dev), "Error: request_irq failed\n");
 	goto error_requ_irq;
     }
+*/
 
 	/* Optional sanity checks. The PCI is ready now, all of this could also be called from fops. */
 	{
@@ -537,9 +540,11 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	}
     return 0;
 
+    /*
 error_requ_irq:
     pci_free_irq_vectors(dev);
 error_irq_vectors:
+*/
     pci_iounmap(dev, mmio);
     pci_release_region(dev, PCI_BAR);
 error_requ_reg:
@@ -551,8 +556,8 @@ error:
 static void my_pci_remove(struct pci_dev *dev)
 {
     dev_info(&dev->dev, "my_pci_remove\n");
-    free_irq(pci_irq_vector(dev, 0), &major);
-    pci_free_irq_vectors(dev);
+//    free_irq(pci_irq_vector(dev, 0), &major);
+//    pci_free_irq_vectors(dev);
     pci_iounmap(dev, mmio);
     pci_disable_device(dev);
     pci_release_region(dev, PCI_BAR); /* has to be called after disabling device */
