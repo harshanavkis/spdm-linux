@@ -42,7 +42,7 @@ static void my_print_hexdump(const char *prefix, const void *buf, size_t len) {
 #endif
 
 // Encrypts @data of size @count and prepends counter as associated data.
-// Appends authentication tag.
+// Prepends authentication tag.
 // returns buffer with result (size of return buffer == adlen + count + authsize)
 static void *disagg_mmio_encrypt(struct disagg_crypto *crypto, const u8 *data, size_t count)
 {
@@ -53,6 +53,7 @@ static void *disagg_mmio_encrypt(struct disagg_crypto *crypto, const u8 *data, s
 #endif
 
     sg_set_buf(&crypto->sg[0], data, count);
+    sg_set_buf(&crypto->sg_enc[0], crypto->buf_enc + crypto->authsize, count);
     aead_request_set_crypt(crypto->req, crypto->sg, crypto->sg_enc, count, crypto->iv);
     if (crypto_wait_req(crypto_aead_encrypt(crypto->req), &crypto->wait)) {
 	pr_err("disagg_mmio_encrypt: encryption failed\n");
@@ -189,8 +190,8 @@ int disagg_init_crypto_mmio(u8* key, int keylen)
     crypto->tfm = tfm;
     crypto->req = req;
     crypto->iv = iv;
-    sg_set_buf(&crypto->sg_enc[0], crypto->buf_enc, crypto->size_buffers);
-    sg_set_buf(&crypto->sg_dec[0], crypto->buf_dec, crypto->size_buffers);
+    sg_set_buf(&crypto->sg_enc[1], crypto->buf_enc, crypto->authsize);
+    sg_set_buf(&crypto->sg_dec[1], crypto->buf_dec, crypto->authsize);
 
     return 0;
 
@@ -306,6 +307,7 @@ ssize_t ivshmem_read(void *buf, size_t count, loff_t offset)
     wait_for_read_doorbell_set();
 
     memcpy(crypto->buf_dec, ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, count + crypto->authsize);
+    sg_set_buf(&crypto->sg_dec[0], crypto->buf_dec + crypto->authsize, count);
 
     if (disagg_mmio_decrypt(crypto, buf, count))
 	return 0;
