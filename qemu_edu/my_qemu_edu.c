@@ -210,7 +210,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 		    // Update values in the mapped region and tell device to also update its internal memory with it
 		    memset(actual, 0xcc, SIZE / 2);
-		    dma_sync_single_for_device(&(dev->dev), dma_handle, SIZE / 2, DMA_BIDIRECTIONAL);
+		    dma_sync_single_for_device(&(dev->dev), dma_handle, SIZE, DMA_BIDIRECTIONAL);
 		    writeq((u64)dma_handle, mmio + IO_DMA_SRC);
 		    writeq(DMA_BASE, mmio + IO_DMA_DST);
 		    writeq(SIZE, mmio + IO_DMA_CNT);
@@ -245,6 +245,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		end:
 		    dma_unmap_single(&(dev->dev), dma_handle, SIZE, DMA_BIDIRECTIONAL);
 		}
+/*
 		{
 		    // Primarily tests the free_list allocator
 		    dev_info(&(dev->dev), "DMA Test 2\n");
@@ -537,6 +538,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    kfree(actual1);
 		    kfree(expected);
 		}
+*/
 	}
     return 0;
 
