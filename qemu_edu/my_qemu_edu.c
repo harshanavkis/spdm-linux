@@ -245,9 +245,9 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		end:
 		    dma_unmap_single(&(dev->dev), dma_handle, SIZE, DMA_BIDIRECTIONAL);
 		}
-/*
 		{
 		    // Primarily tests the free_list allocator
+		    // Still have to let device write data to its interal memory to not mess up the counter
 		    dev_info(&(dev->dev), "DMA Test 2\n");
 		    dma_addr_t dma_handle1, dma_handle2, dma_handle3, dma_handle4, dma_handle5;
 		    size_t initial_dma_size = (1 << 20) - (1 << 12);
@@ -274,6 +274,11 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    }
 		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size - (1 << 12)))
 			goto end2;
+		    writeq((u64)dma_handle1, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE1, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
 		    // next 3 pages
 		    dma_handle2 = dma_map_single(&(dev->dev), actual2, SIZE2, DMA_BIDIRECTIONAL);
@@ -282,6 +287,11 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    }
 		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size - 4 * (1 << 12)))
 			goto end2;
+		    writeq((u64)dma_handle2, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE2, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
 		    // another page
 		    dma_handle3 = dma_map_single(&(dev->dev), actual3, SIZE3, DMA_BIDIRECTIONAL);
@@ -290,7 +300,11 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    }
 		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size - 5 * (1 << 12)))
 			goto end2;
-
+		    writeq((u64)dma_handle3, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE3, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
 		    // unmap the middle one
 		    dma_unmap_single(&(dev->dev), dma_handle2, SIZE2, DMA_BIDIRECTIONAL);
@@ -306,6 +320,11 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    if (!disagg_test_check_dma_values(2, 0, 1 * (1 << 12)) 
 			    || !disagg_test_check_dma_values(2, 1, initial_dma_size - 5 * (1 << 12)))
 			goto end2;
+		    writeq((u64)dma_handle4, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE4, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
 		    // Map 3 pages again
 		    dma_handle2 = dma_map_single(&(dev->dev), actual2, SIZE2, DMA_BIDIRECTIONAL);
@@ -315,6 +334,11 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    if (!disagg_test_check_dma_values(2, 0, 1 * (1 << 12)) 
 			    || !disagg_test_check_dma_values(2, 1, initial_dma_size - 8 * (1 << 12)))
 			goto end2;
+		    writeq((u64)dma_handle2, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE2, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
 		    dma_unmap_single(&(dev->dev), dma_handle1, SIZE1, DMA_BIDIRECTIONAL);
 		    dma_unmap_single(&(dev->dev), dma_handle2, SIZE2, DMA_BIDIRECTIONAL);
@@ -331,6 +355,12 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    }
 		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size - 2 * (1 << 12)))
 			goto end2;
+		    writeq((u64)dma_handle5, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE5, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
 		    dma_unmap_single(&(dev->dev), dma_handle5, SIZE5, DMA_BIDIRECTIONAL);
 		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size))
 			goto end2;
@@ -358,15 +388,11 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    memset(actual1, 0x11, SIZE1);
 		    memset(actual2, 0x22, SIZE2);
 		    
+		    /*** First buffer ***/
 		    dma_handle1 = dma_map_single(&(dev->dev), actual1, SIZE1, DMA_BIDIRECTIONAL);
 		    if (dma_mapping_error(&(dev->dev), dma_handle1)) {
 			pr_info("DMA test 3 failed with mapping error 1");
 			goto kfree_3;
-		    }
-		    dma_handle2 = dma_map_single(&(dev->dev), actual2, SIZE2, DMA_BIDIRECTIONAL);
-		    if (dma_mapping_error(&(dev->dev), dma_handle2)) {
-			pr_info("DMA test 3 failed with mapping error 2");
-			goto unmap_3_1;
 		    }
 
 		    // Write first buffer to device's dma buffer 
@@ -376,6 +402,13 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
+		    /*** Second buffer ***/
+		    dma_handle2 = dma_map_single(&(dev->dev), actual2, SIZE2, DMA_BIDIRECTIONAL);
+		    if (dma_mapping_error(&(dev->dev), dma_handle2)) {
+			pr_info("DMA test 3 failed with mapping error 2");
+			goto unmap_3_1;
+		    }
+
 		    // Write second buffer to device's dma buffer 
 		    writeq((u64)dma_handle2, mmio + IO_DMA_SRC);
 		    writeq(DMA_BASE + SIZE1, mmio + IO_DMA_DST);
@@ -383,14 +416,15 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
-		    // Let device write 256 bytes of second buffer into first
+		    /*** Let device write 256 bytes of second buffer into first ***/
+		    // The sync then has to match the offset and size of partial update
 		    writeq(DMA_BASE + SIZE1, mmio + IO_DMA_SRC);
 		    writeq(dma_handle1 + 512, mmio + IO_DMA_DST);
 		    writeq(256, mmio + IO_DMA_CNT);
 		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
-		    dma_sync_single_for_cpu(&(dev->dev), dma_handle1, SIZE1, DMA_BIDIRECTIONAL);
+		    dma_sync_single_for_cpu(&(dev->dev), dma_handle1 + 512, 256, DMA_BIDIRECTIONAL);
 
 		    // Check if buffer 1 was updated
 		    memset(expected, 0x11, SIZE1);
@@ -400,13 +434,14 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 			goto fail3;
 		    }
 
-		    // Update whole buffer 2, but do only a partial sync
+		    /*** Update whole local buffer 2, but do only a partial sync ***/
 		    memset(actual2, 0xff, SIZE2);
 		    dma_sync_single_for_device(&(dev->dev), dma_handle2 + 1024, 4, DMA_BIDIRECTIONAL);
 
-		    writeq((u64)dma_handle2, mmio + IO_DMA_SRC);
-		    writeq(DMA_BASE + SIZE1, mmio + IO_DMA_DST);
-		    writeq(SIZE2, mmio + IO_DMA_CNT);
+		    // dma instruction has to match partial sync
+		    writeq((u64)dma_handle2 + 1024, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE + SIZE1 + 1024, mmio + IO_DMA_DST);
+		    writeq(4, mmio + IO_DMA_CNT);
 		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
@@ -416,7 +451,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
-		    dma_sync_single_for_cpu(&(dev->dev), dma_handle1, SIZE1, DMA_BIDIRECTIONAL);
+		    dma_sync_single_for_cpu(&(dev->dev), dma_handle1, SIZE2, DMA_BIDIRECTIONAL);
 
 		    memset(expected, 0x22, SIZE2);
 		    memset(expected + 1024, 0xff, 4);
@@ -425,12 +460,10 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 			goto fail3;
 		    }
 
-		    // test partical cpu sync
+		    /*** test partical cpu sync ***/
+		    // Fill whole DMA buffer 1
 		    memset(actual1, 0xee, SIZE1);
 		    dma_sync_single_for_device(&(dev->dev), dma_handle1, SIZE1, DMA_BIDIRECTIONAL);
-
-		    memset(actual2, 0xbb, SIZE2);
-		    dma_sync_single_for_device(&(dev->dev), dma_handle2, SIZE2, DMA_BIDIRECTIONAL);
 
 		    writeq((u64)dma_handle1, mmio + IO_DMA_SRC);
 		    writeq(DMA_BASE, mmio + IO_DMA_DST);
@@ -438,9 +471,13 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
+		    // Update local buffer 2
+		    memset(actual2, 0xbb, SIZE2);
+
+		    // Let device update its buffer 2 with partial region of DMA buffer 1
 		    writeq(DMA_BASE, mmio + IO_DMA_SRC);
-		    writeq(dma_handle2, mmio + IO_DMA_DST);
-		    writeq(SIZE2, mmio + IO_DMA_CNT);
+		    writeq(dma_handle2 + 43, mmio + IO_DMA_DST);
+		    writeq(11, mmio + IO_DMA_CNT);
 		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 		    
@@ -487,19 +524,39 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 			pr_info("DMA test 4 failed with mapping error 1");
 			goto kfree_4;
 		    }
+		    writeq((u64)dma_handle1, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE1 - 30, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
 		    dma_handle2 = dma_map_single(&(dev->dev), actual2 + 1500, SIZE2 - 1500, DMA_BIDIRECTIONAL);
 		    if (dma_mapping_error(&(dev->dev), dma_handle2)) {
 			pr_info("DMA test 4 failed with mapping error 2");
 			goto unmap_4_1;
 		    }
+		    writeq((u64)dma_handle2, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(SIZE2 - 1500, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
-		    // Change buffer outside of mapping and check if it affects DMA
-		    memset(actual1 + 30, 0xab, 5);
+		    // Write buffer 1 again
 		    dma_sync_single_for_device(&(dev->dev), dma_handle1, SIZE1 - 30, DMA_BIDIRECTIONAL);
 
 		    writeq((u64)dma_handle1, mmio + IO_DMA_SRC);
 		    writeq(DMA_BASE, mmio + IO_DMA_DST);
-		    writeq(100, mmio + IO_DMA_CNT);
+		    writeq(SIZE1 - 30, mmio + IO_DMA_CNT);
+		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
+
+		    // Change partial buffer and check if it affects DMA
+		    memset(actual1 + 30, 0xab, 5);
+		    dma_sync_single_for_device(&(dev->dev), dma_handle1, 4, DMA_BIDIRECTIONAL);
+
+		    writeq((u64)dma_handle1, mmio + IO_DMA_SRC);
+		    writeq(DMA_BASE, mmio + IO_DMA_DST);
+		    writeq(4, mmio + IO_DMA_CNT);
 		    iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
@@ -509,14 +566,14 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    iowrite32(DMA_CMD | DMA_FROM_DEV, mmio + IO_DMA_CMD);
 		    while(ioread32(mmio + IO_DMA_CMD) & 0x1) {}
 
-		    dma_sync_single_for_cpu(&(dev->dev), dma_handle2, SIZE2 - 1500, DMA_BIDIRECTIONAL);
+		    dma_sync_single_for_cpu(&(dev->dev), dma_handle2 + 7, 50, DMA_BIDIRECTIONAL);
 
 		    // Results in a chaotic memory buffer
 		    memset(expected, 0x22, SIZE2);
 		    memset(expected + 1500, 0xaa, 13);
 		    memset(expected + 1500 + 7, 0x11, 50);
 		    memset(expected + 1500 + 7, 0xdd, 20);
-		    memset(expected + 1500 + 7, 0xab, 5);
+		    memset(expected + 1500 + 7, 0xab, 4);
 		    if (memcmp(expected, actual2, SIZE2) != 0) {
 			pr_info("chaotic memory buffer update failed");
 			goto fail4;
@@ -538,7 +595,6 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    kfree(actual1);
 		    kfree(expected);
 		}
-*/
 	}
     return 0;
 
