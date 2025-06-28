@@ -85,38 +85,6 @@ void disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code
 
 #define DISAGG_DEV_OP_READ 1
 #define DISAGG_DEV_OP_WRITE 2
-#define DISAGG_DEV_OP_DMA_MAP 3
-
-/*
- * Instructs device to encrypt specific memory region into shmem
- * 1st message (host -> proxy): struct guest_message_header: addr = proxyDMA 
- * 2nd message (proxy -> host): completion information (0 for success, 1 for failure), size of message 1 byte
- */
-#define DISAGG_DEV_OP_DMA_ENC 4
-
-/*
- * Instructs device to decrypt specific memory region into its own virtual address space
- * 1st message (host -> proxy): struct guest_message_header: addr = proxyDMA 
- * 2nd message (proxy -> host): completion information (0 for success, 1 for failure), size of message 1 byte
- */
-#define DISAGG_DEV_OP_DMA_DEC 5
-/****************************************/
-
-/*
- * @brief Instructs proxy to send its proxyDMA and proxyShmem addresses
- * Only done once during initialization
- * Respone is proxyDMA
- */
-#define DISAGG_DEV_OP_ADDR_INIT 6
-
-/*
- * @brief VM sends the pyhsical address of its mapped region (EDU BAR)
- * Only done once during initialization
- * Done in two sends to get BAR number and then region
- * 1st message: address == physical address 
- * 2nd message: bar nr (no guest_message_header) size = 1B
- */
-#define DISAGG_DEV_OP_BAR_PHYS 7
 
 /* 
  * Disagg device DMA (definitions in mm/disagg_dma.c)

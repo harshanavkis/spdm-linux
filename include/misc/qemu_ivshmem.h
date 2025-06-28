@@ -6,13 +6,17 @@
 #define WRITE_DOORBELL_OFFSET 1
 #define DOORBELL_SIZE 1  // 1 byte for each doorbell
 #define TOTAL_DOORBELL_SIZE (DOORBELL_SIZE * 2)
-#define DMA_PROXY_ADDRESS_OFFSET (256) // 8 Byte aligned and just far away from possible collision
 #define DMA_REGION_OFFSET (1 << 12) // 4K aligned
 #define DMA_SIZE (SHMEM_SIZE - DMA_REGION_OFFSET)
+
+/* Offsets in the shared memory with special values */
+#define OFFSET_PROXY_SHMEM (256)
+#define OFFSET_BAR_PHYS_ADDR (264)
 
 ssize_t ivshmem_read(void *buf, size_t count, loff_t offset);
 ssize_t ivshmem_write(const void *buf, size_t count, loff_t offset);
 ssize_t ivshmem_read_nonblocking(void *buf, size_t count, loff_t offset);
-int disagg_init_crypto(u8* key, int keylen);
+size_t ivshmem_write_nonblocking(void *buf, size_t count, loff_t offset);
+int disagg_init_crypto_mmio(u8* key, int keylen);
 
 #endif /* _MISC_QEMU_IVSHMEM_H_ */

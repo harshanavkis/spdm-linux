@@ -199,27 +199,6 @@ bool disagg_is_dev(struct device *dev)
     }
 }
 
-// Requests proxies dma address and writes it into field of disagg_dma_allocator
-// Those addresse can then be used to convert from proxyDMA to vmShmem
-static int obtain_proxy_address(void) {
-    struct guest_message_header hdr;
-    u8 *resp = kmalloc(sizeof(void *) * 2, GFP_KERNEL);
-    if (resp == NULL) {
-	pr_err("kmalloc_failed");
-	return 1;
-    }
-
-    hdr.address = 0;
-    hdr.operation = DISAGG_DEV_OP_ADDR_INIT;
-    hdr.length = 8;
-    ivshmem_write(&hdr, sizeof(hdr), 0);
-
-    ivshmem_read(resp, 8, 0);
-
-    disagg_dma_allocator.proxyDMA_start = *((u64 *) resp);
-
-    return 0;
-}
 
 int disagg_dma_allocator_init(u8 *key, int keylen)
 {
@@ -253,7 +232,7 @@ int disagg_dma_allocator_init(u8 *key, int keylen)
 	}
 	iv = kmalloc(iv_size, GFP_KERNEL);
 	if (iv == NULL) {
-	    pr_err("disagg_init_crypto: kmalloc of IV-space failed\n");
+	    pr_err("disagg_dma_allocator_init: kmalloc of IV-space failed\n");
 	    goto error_free_aead;
 	}
 	memset((void *) iv, 0x0, iv_size);
@@ -264,13 +243,13 @@ int disagg_dma_allocator_init(u8 *key, int keylen)
 	// Init and set key 
 	memset((void *) key, 0x00, keylen);
 	if (crypto_aead_setkey(tfm, key, keylen) < 0) {
-	    pr_err("disagg_init_crypto: setkey failed\n");
+	    pr_err("disagg_dma_allocator_init: setkey failed\n");
 	    goto error_free_aead;
 	}
 
 	// Set size of authentication code
 	if (crypto_aead_setauthsize(tfm, disagg_dma_allocator.crypto.authsize) < 0) {
-	    pr_err("disagg_init_crypto: setauthsize failed\n");
+	    pr_err("disagg_dma_allocator_init: setauthsize failed\n");
 	    goto error_free_aead;
 	}
 
@@ -279,7 +258,7 @@ int disagg_dma_allocator_init(u8 *key, int keylen)
 	// Obtain the request structures
 	req = aead_request_alloc(tfm, GFP_KERNEL);
 	if (req == NULL) {
-	    pr_err("disagg_init_crypto: request_alloc failed\n");
+	    pr_err("disagg_dma_allocator_init: request_alloc failed\n");
 	    goto error_free_aead;
 	}
 
@@ -297,10 +276,9 @@ int disagg_dma_allocator_init(u8 *key, int keylen)
 	disagg_dma_allocator.crypto.req = req;
 	disagg_dma_allocator.crypto.iv = iv;
 
-	if (obtain_proxy_address() != 0) {
-	    pr_err("get_proxy_addresses failed\n");
-	    goto error_free_aead;
-	}
+	// Reads proxies DMA address from shmem
+	// This address can then be used to convert from proxyDMA to vmShmem
+	ivshmem_read_nonblocking(&disagg_dma_allocator.proxyDMA_start, sizeof(disagg_dma_allocator.proxyDMA_start), OFFSET_PROXY_SHMEM);
 
 	// Add the initial free memory region, which contains the whole free dma area
 	struct memory_region *first_region = kmalloc(sizeof(struct memory_region), GFP_KERNEL);
@@ -322,7 +300,7 @@ error_free_aead:
 static int disagg_dma_encrypt(void *from, void *to, size_t size)
 {
     struct scatterlist sg_src[1];
-    struct scatterlist sg_dst[1];
+    struct scatterlist sg_dst[2];
 
 #ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
     pr_info("disagg_dma_encrypt:\n");
@@ -330,10 +308,11 @@ static int disagg_dma_encrypt(void *from, void *to, size_t size)
     my_print_hexdump("Plaintext: ", from, size);
 #endif
 
-    sg_mark_end(sg_src);
-    sg_mark_end(sg_dst);
+    sg_mark_end(&sg_src[0]);
+    sg_mark_end(&sg_dst[1]);
     sg_set_buf(&sg_src[0], from, size);
-    sg_set_buf(&sg_dst[0], to, size + disagg_dma_allocator.crypto.authsize);
+    sg_set_buf(&sg_dst[0], to + disagg_dma_allocator.crypto.authsize, size);
+    sg_set_buf(&sg_dst[1], to, disagg_dma_allocator.crypto.authsize);
     aead_request_set_crypt(disagg_dma_allocator.crypto.req, sg_src, sg_dst, size, disagg_dma_allocator.crypto.iv);
     if (crypto_wait_req(crypto_aead_encrypt(disagg_dma_allocator.crypto.req), &disagg_dma_allocator.crypto.wait)) {
 	pr_err("disagg_dma_encrypt: encryption failed\n");
@@ -344,8 +323,8 @@ static int disagg_dma_encrypt(void *from, void *to, size_t size)
 
 #ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
     pr_info("cipher-size (only encrypted data): %ld\n", size);
-    my_print_hexdump("ciphertext: ", to, size);
-    my_print_hexdump("Auth tag: ", to + size, disagg_dma_allocator.crypto.authsize);
+    my_print_hexdump("ciphertext: ", to + disagg_dma_allocator.crypto.authsize, size);
+    my_print_hexdump("Auth tag: ", to, disagg_dma_allocator.crypto.authsize);
     pr_info("\n");
 #endif
 
@@ -354,7 +333,7 @@ static int disagg_dma_encrypt(void *from, void *to, size_t size)
 
 static int disagg_dma_decrypt(void *from, void *to, size_t size)
 {
-    struct scatterlist sg_src[1];
+    struct scatterlist sg_src[2];
     struct scatterlist sg_dst[1];
     int err;
 
@@ -362,14 +341,15 @@ static int disagg_dma_decrypt(void *from, void *to, size_t size)
     pr_info("disagg_dma_decrypt:\n");
     pr_info("counter: %llu", *disagg_dma_allocator.crypto.counter);
     pr_info("cipher-size (only encrypted data): %ld\n", size);
-    my_print_hexdump("ciphertext: ", from, size);
-    my_print_hexdump("Auth Tag: ", from + size, disagg_dma_allocator.crypto.authsize);
+    my_print_hexdump("ciphertext: ", from + disagg_dma_allocator.crypto.authsize, size);
+    my_print_hexdump("Auth Tag: ", from, disagg_dma_allocator.crypto.authsize);
 #endif
 
-    sg_mark_end(sg_src);
-    sg_mark_end(sg_dst);
-    sg_set_buf(sg_src, from, size + disagg_dma_allocator.crypto.authsize);
-    sg_set_buf(sg_dst, to, size);
+    sg_mark_end(&sg_src[1]);
+    sg_mark_end(&sg_dst[0]);
+    sg_set_buf(&sg_src[0], from + disagg_dma_allocator.crypto.authsize, size);
+    sg_set_buf(&sg_src[1], from, disagg_dma_allocator.crypto.authsize);
+    sg_set_buf(&sg_dst[0], to, size);
     aead_request_set_crypt(disagg_dma_allocator.crypto.req, sg_src, sg_dst, size + disagg_dma_allocator.crypto.authsize, disagg_dma_allocator.crypto.iv);
     err = crypto_wait_req(crypto_aead_decrypt(disagg_dma_allocator.crypto.req), &disagg_dma_allocator.crypto.wait);
     if (err) {
@@ -393,12 +373,10 @@ static int disagg_dma_decrypt(void *from, void *to, size_t size)
 /* Allocates a dmu buffer from the shmem region */
 dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size_t offset, size_t size, enum dma_data_direction dir, unsigned long attrs) 
 {
-    struct guest_message_header hdr;
     struct disagg_dma_entry *new_entry;
     void *vmDMA = page_to_virt(page) + offset;
     void *vmShmem;
     dma_addr_t proxyDMA;
-    u8 resp;
 
 #ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
     pr_info("disagg_dma_map_page_attrs\n");
@@ -428,25 +406,8 @@ dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size
 
     vmShmem = proxyDMA_to_vmShmem(proxyDMA);
 
-    {
-	ktime_t start, end;
-
-	start = ktime_get();
-	// Encrypt the data to shmem
-	disagg_dma_encrypt(vmDMA, vmShmem, size);
-	end = ktime_get();
-
-	pr_info("time dma_encrypt measured: %lu;%llu end encrypt", size, (u64) ktime_to_ns(end) - (u64) ktime_to_ns(start));
-    }
-
-    // Provide proxy with information where the encrypted data is placed into shmem
-    hdr.address = proxyDMA;
-    hdr.operation = DISAGG_DEV_OP_DMA_MAP;
-    hdr.length = size;
-    ivshmem_write(&hdr, sizeof(hdr), 0);
-
-    // confirmation for completion of decryption
-    ivshmem_read(&resp, 1, 0);
+    // Encrypt the data to shmem
+    disagg_dma_encrypt(vmDMA, vmShmem, size);
 
     spin_unlock(&disagg_dma_allocator.lock);
 
@@ -490,8 +451,10 @@ error:
 
 void disagg___dma_sync_single_for_cpu(struct device *dev, dma_addr_t proxyDMA, size_t size, enum dma_data_direction dir)
 {
-    struct guest_message_header hdr;
-    u8 res;
+#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
+    pr_info("disagg___dma_sync_single_for_cpu\n");
+#endif
+
     u64 offset;
     struct disagg_dma_entry *entry;
 
@@ -505,29 +468,7 @@ void disagg___dma_sync_single_for_cpu(struct device *dev, dma_addr_t proxyDMA, s
 
     offset = proxyDMA - entry->proxyDMA;
 
-#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
-    pr_info("disagg___dma_sync_single_for_cpu\n");
-#endif
-
-    // Provide proxy with information where to encrypt the data inside shmem to
-    hdr.address = (u64) proxyDMA;
-    hdr.operation = DISAGG_DEV_OP_DMA_ENC;
-    hdr.length = size;
-    ivshmem_write(&hdr, sizeof(hdr), 0);
-
-    // Confirm completion of encryption
-    ivshmem_read(&res, sizeof(res), 0);
-
-    {
-	ktime_t start, end;
-
-	start = ktime_get();
-	// Decrypt data into virtual address space
-	disagg_dma_decrypt(proxyDMA_to_vmShmem(proxyDMA), entry->vmDMA + offset, size);
-	end = ktime_get();
-
-	pr_info("time dma_decrypt measured: %lu;%llu end decrypt", size, (u64) ktime_to_ns(end) - (u64) ktime_to_ns(start));
-    }
+    disagg_dma_decrypt(proxyDMA_to_vmShmem(proxyDMA), entry->vmDMA + offset, size);
 
     spin_unlock(&disagg_dma_allocator.lock);
 
@@ -538,14 +479,12 @@ error:
 
 void disagg___dma_sync_single_for_device(struct device *dev, dma_addr_t proxyDMA, size_t size, enum dma_data_direction dir)
 {
-    struct guest_message_header hdr;
-    u8 res;
-    u64 offset;
-    struct disagg_dma_entry *entry;
-
 #ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
     pr_info("disagg___dma_sync_single_for_device\n");
 #endif
+
+    u64 offset;
+    struct disagg_dma_entry *entry;
 
     spin_lock(&disagg_dma_allocator.lock);
 
@@ -559,15 +498,6 @@ void disagg___dma_sync_single_for_device(struct device *dev, dma_addr_t proxyDMA
     
     // Encrypt data into virtual address space
     disagg_dma_encrypt(entry->vmDMA + offset, proxyDMA_to_vmShmem(proxyDMA), size);
-
-    // Give proxy source address of decrypted data in shmem
-    hdr.address = (u64) proxyDMA;
-    hdr.operation = DISAGG_DEV_OP_DMA_DEC;
-    hdr.length = size;
-    ivshmem_write(&hdr, sizeof(hdr), 0);
-
-    // Confirm completion of encryption
-    ivshmem_read(&res, sizeof(res), 0);
 
     spin_unlock(&disagg_dma_allocator.lock);
 
@@ -607,7 +537,7 @@ static int __init disagg_crypto_objects_init(void)
 	return 1;
     }
     memset(key, 0x00, keylen); // init with dummy value
-    if (disagg_init_crypto(key, keylen) != 0) {
+    if (disagg_init_crypto_mmio(key, keylen) != 0) {
 	goto free_key;
     }
     if (disagg_dma_allocator_init(key, keylen) != 0) {

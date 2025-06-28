@@ -28,9 +28,9 @@
 #include <asm/memtype.h>
 #include <asm/setup.h>
 
-#include <misc/qemu_ivshmem.h> // for ivshmem_write
-
 #include "physaddr.h"
+
+#include "misc/qemu_ivshmem.h" // for ivshmem_write_nonblocking
 
 /*
  * Descriptor controlling ioremap() behavior.
@@ -302,23 +302,13 @@ void disagg_dev_mark_page_not_present(unsigned long start_addr, size_t size)
 }
 
 /*
- * Send information about bar physical address to the remote device
+ * Gives information about bar physical address to the remote device
  */
-static void disagg_send_physical_address(int disagg_bar_nr, uint64_t phys_addr) {
-    struct guest_message_header hdr;
-    u8 bar = (uint8_t) disagg_bar_nr;
-    u8 *resp = kmalloc(sizeof(void *) * 2, GFP_KERNEL);
-    if (resp == NULL) {
-	pr_err("kmalloc_failed");
-	return;
+static void disagg_provide_physical_address(uint64_t bar_nr, uint64_t phys_addr)
+{
+    if (ivshmem_write_nonblocking(&phys_addr, sizeof(phys_addr), OFFSET_BAR_PHYS_ADDR) != sizeof(phys_addr)) {
+	pr_info("write of physical address failed\n");
     }
-
-    hdr.address = phys_addr;
-    hdr.operation = DISAGG_DEV_OP_BAR_PHYS;
-    hdr.length = sizeof(phys_addr);
-    ivshmem_write(&hdr, sizeof(hdr), 0);
-
-    ivshmem_write(&bar, sizeof(bar), 0);
 }
 
 /*
@@ -475,7 +465,7 @@ __ioremap_caller(resource_size_t phys_addr, unsigned long size,
 		pr_info("bar: pyhs_adr: %llx, size: %ld\n", phys_addr, size);
 		add_disagg_dev_mmio_range((unsigned long)ret_addr, (unsigned long)ret_addr + size - 1);
 		disagg_register_ioremap((unsigned long) ret_addr, phys_addr, size);
-		disagg_send_physical_address(disagg_bar_nr, phys_addr);
+		disagg_provide_physical_address(disagg_bar_nr, phys_addr);
 		disagg_dev_mark_page_not_present((unsigned long) ret_addr, size);
 	}
 	this_cpu_write(ioremap_disagg_device_flags, 0);

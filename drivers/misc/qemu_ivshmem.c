@@ -42,7 +42,7 @@ static void my_print_hexdump(const char *prefix, const void *buf, size_t len) {
 #endif
 
 // Encrypts @data of size @count and prepends counter as associated data.
-// Appends authentication tag.
+// Prepends authentication tag.
 // returns buffer with result (size of return buffer == adlen + count + authsize)
 static void *disagg_mmio_encrypt(struct disagg_crypto *crypto, const u8 *data, size_t count)
 {
@@ -53,6 +53,7 @@ static void *disagg_mmio_encrypt(struct disagg_crypto *crypto, const u8 *data, s
 #endif
 
     sg_set_buf(&crypto->sg[0], data, count);
+    sg_set_buf(&crypto->sg_enc[0], crypto->buf_enc + crypto->authsize, count);
     aead_request_set_crypt(crypto->req, crypto->sg, crypto->sg_enc, count, crypto->iv);
     if (crypto_wait_req(crypto_aead_encrypt(crypto->req), &crypto->wait)) {
 	pr_err("disagg_mmio_encrypt: encryption failed\n");
@@ -106,7 +107,7 @@ static int disagg_mmio_decrypt(struct disagg_crypto *crypto, u8 *buf, size_t cou
     return 0;
 }
 
-int disagg_init_crypto(u8* key, int keylen)
+int disagg_init_crypto_mmio(u8* key, int keylen)
 {
     struct disagg_crypto *crypto = &ivs_dev_global->crypto;
     struct crypto_aead *tfm = NULL;
@@ -119,10 +120,10 @@ int disagg_init_crypto(u8* key, int keylen)
     // Create transformation object
     tfm = crypto_alloc_aead("gcm(aes)", 0, 0);
     if (IS_ERR(tfm)) {
-	pr_err("disagg_init_crypto: AES/GCM alloc_aead failed\n");
+	pr_err("disagg_init_crypto_mmio: AES/GCM alloc_aead failed\n");
 	return 1;
     } else {
-	    pr_info("disagg_init_crypto: gcm(aes): name: %s, driver_name: %s\n", tfm->base.__crt_alg->cra_name, tfm->base.__crt_alg->cra_driver_name);
+	    pr_info("disagg_init_crypto_mmio: gcm(aes): name: %s, driver_name: %s\n", tfm->base.__crt_alg->cra_name, tfm->base.__crt_alg->cra_driver_name);
     }
 
     // Init IV
@@ -134,7 +135,7 @@ int disagg_init_crypto(u8* key, int keylen)
     }
     iv = kmalloc(iv_size, GFP_KERNEL);
     if (iv == NULL) {
-	pr_err("disagg_init_crypto: kmalloc of IV-space failed\n");
+	pr_err("disagg_init_crypto_mmio: kmalloc of IV-space failed\n");
 	goto error_free_aead;
     }
     memset((void *) iv, 0x0, iv_size);
@@ -144,13 +145,13 @@ int disagg_init_crypto(u8* key, int keylen)
 
     // Set key 
     if (crypto_aead_setkey(tfm, key, keylen) < 0) {
-	pr_err("disagg_init_crypto: setkey failed\n");
+	pr_err("disagg_init_crypto_mmio: setkey failed\n");
 	goto error_free_aead;
     }
 
     // Set size of authentication code
     if (crypto_aead_setauthsize(tfm, crypto->authsize) < 0) {
-	pr_err("disagg_init_crypto: setauthsize failed\n");
+	pr_err("disagg_init_crypto_mmio: setauthsize failed\n");
 	goto error_free_aead;
     }
 
@@ -158,12 +159,12 @@ int disagg_init_crypto(u8* key, int keylen)
     crypto->size_buffers = crypto->authsize + 64;
     crypto->buf_enc = kmalloc(crypto->size_buffers, GFP_KERNEL); // extra 64 bytes for guest_message_header should be enough
     if (!crypto->buf_enc) {
-	pr_err("disagg_init_crypto: kmalloc failed\n");
+	pr_err("disagg_init_crypto_mmio: kmalloc failed\n");
 	goto error_free_aead;
     }
     crypto->buf_dec = kmalloc(crypto->size_buffers, GFP_KERNEL); // extra 64 bytes for guest_message_header should be enough
     if (!crypto->buf_dec) {
-	pr_err("disagg_init_crypto: kmalloc failed\n");
+	pr_err("disagg_init_crypto_mmio: kmalloc failed\n");
 	goto error_free_buf;
     }
 
@@ -172,7 +173,7 @@ int disagg_init_crypto(u8* key, int keylen)
     // Obtain the request structures
     req = aead_request_alloc(tfm, GFP_KERNEL);
     if (req == NULL) {
-	pr_err("disagg_init_crypto: request_alloc failed\n");
+	pr_err("disagg_init_crypto_mmio: request_alloc failed\n");
 	goto error_free_buf2;
     }
 
@@ -189,8 +190,8 @@ int disagg_init_crypto(u8* key, int keylen)
     crypto->tfm = tfm;
     crypto->req = req;
     crypto->iv = iv;
-    sg_set_buf(&crypto->sg_enc[0], crypto->buf_enc, crypto->size_buffers);
-    sg_set_buf(&crypto->sg_dec[0], crypto->buf_dec, crypto->size_buffers);
+    sg_set_buf(&crypto->sg_enc[1], crypto->buf_enc, crypto->authsize);
+    sg_set_buf(&crypto->sg_dec[1], crypto->buf_dec, crypto->authsize);
 
     return 0;
 
@@ -305,7 +306,8 @@ ssize_t ivshmem_read(void *buf, size_t count, loff_t offset)
 
     wait_for_read_doorbell_set();
 
-    memcpy_fromio(crypto->buf_dec, ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, count + crypto->authsize);
+    memcpy(crypto->buf_dec, ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, count + crypto->authsize);
+    sg_set_buf(&crypto->sg_dec[0], crypto->buf_dec + crypto->authsize, count);
 
     if (disagg_mmio_decrypt(crypto, buf, count))
 	return 0;
@@ -323,17 +325,33 @@ ssize_t ivshmem_read_nonblocking(void *buf, size_t count, loff_t offset)
     if (!ivs_dev_global || !ivs_dev_global->shmem)
         return -ENODEV;
 
-    if (offset >= ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE)
+    if (offset >= ivs_dev_global->shmem_size)
         return 0;
 
     if (offset + count > ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE)
         count = ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE - offset;
 
-    memcpy_fromio(buf, ivs_dev_global->shmem + offset, count);
+    memcpy(buf, ivs_dev_global->shmem + offset, count);
 
     return count;
 }
 EXPORT_SYMBOL(ivshmem_read_nonblocking);
+
+size_t ivshmem_write_nonblocking(void *buf, size_t count, loff_t offset)
+{
+    if (!ivs_dev_global || !ivs_dev_global->shmem)
+        return -ENODEV;
+
+    if (offset >= ivs_dev_global->shmem_size)
+        return -1;
+
+    if (offset + count > ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE)
+        count = ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE - offset;
+
+    memcpy(ivs_dev_global->shmem + offset, buf, count);
+
+    return count;
+}
 
 ssize_t ivshmem_write(const void *buf, size_t count, loff_t offset)
 {
@@ -355,7 +373,7 @@ ssize_t ivshmem_write(const void *buf, size_t count, loff_t offset)
 
     wait_for_write_doorbell_clear();
 
-    memcpy_toio(ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, enc_buf, count + crypto->authsize);
+    memcpy(ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, enc_buf, count + crypto->authsize);
 
     writeb(1, ivs_dev_global->shmem + WRITE_DOORBELL_OFFSET);
 
