@@ -304,12 +304,14 @@ void disagg_dev_mark_page_not_present(unsigned long start_addr, size_t size)
 /*
  * Gives information about bar physical address to the remote device
  */
+/*
 static void disagg_provide_physical_address(uint64_t bar_nr, uint64_t phys_addr)
 {
     if (ivshmem_write_nonblocking(&phys_addr, sizeof(phys_addr), OFFSET_BAR_PHYS_ADDR) != sizeof(phys_addr)) {
 	pr_info("write of physical address failed\n");
     }
 }
+*/
 
 /*
  * Remap an arbitrary physical address space into the kernel virtual
@@ -465,7 +467,7 @@ __ioremap_caller(resource_size_t phys_addr, unsigned long size,
 		pr_info("bar: pyhs_adr: %llx, size: %ld\n", phys_addr, size);
 		add_disagg_dev_mmio_range((unsigned long)ret_addr, (unsigned long)ret_addr + size - 1);
 		disagg_register_ioremap((unsigned long) ret_addr, phys_addr, size);
-		disagg_provide_physical_address(disagg_bar_nr, phys_addr);
+		//disagg_provide_physical_address(disagg_bar_nr, phys_addr);
 		disagg_dev_mark_page_not_present((unsigned long) ret_addr, size);
 	}
 	this_cpu_write(ioremap_disagg_device_flags, 0);

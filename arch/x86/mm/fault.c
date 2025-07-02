@@ -1493,6 +1493,34 @@ bool is_tracked_mmio(unsigned long addr)
     return ret;
 }
 
+// As we assume, that the device has only one BAR we just return the offset.
+// This offset provided to the device is enough to fulfill the request.
+static u64 disagg_ioremap_virt_to_offset(unsigned long virt_addr)
+{
+    struct rb_node *node;
+    u64 offset = 0;
+
+    spin_lock(&disagg_ioremap_lookup.lock);
+    
+    node = disagg_ioremap_lookup.root.rb_node;
+    while (node) {
+        struct disagg_dev_ioremap_entry *entry = rb_entry(node, struct disagg_dev_ioremap_entry, node);
+
+        if (virt_addr < entry->virt_addr)
+            node = node->rb_left;
+        else if (virt_addr >= entry->virt_addr + entry->size)
+            node = node->rb_right;
+        else {
+	    offset = virt_addr - entry->virt_addr;
+            break;
+        }
+    }
+    
+    spin_unlock(&disagg_ioremap_lookup.lock);
+
+    return offset;
+}
+
 phys_addr_t disagg_ioremap_virt_to_phys(unsigned long virt_addr)
 {
     struct rb_node *node;
@@ -1521,13 +1549,13 @@ phys_addr_t disagg_ioremap_virt_to_phys(unsigned long virt_addr)
 
 static bool mmio_read(int size, unsigned long addr, unsigned long *val)
 {
-	uint64_t disagg_dev_phy_addr = disagg_ioremap_virt_to_phys(addr);
+	uint64_t offset = disagg_ioremap_virt_to_offset(addr);
 
 #ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("mmio_read: Address: %llx\n", disagg_dev_phy_addr);
 #endif
 
-	dev_access_header.address = disagg_dev_phy_addr;
+	dev_access_header.address = offset;
 	dev_access_header.operation = DISAGG_DEV_OP_READ;
 	dev_access_header.length = size;
 
@@ -1540,13 +1568,13 @@ static bool mmio_read(int size, unsigned long addr, unsigned long *val)
 
 static bool mmio_write(int size, unsigned long addr, unsigned long val)
 {
-	uint64_t disagg_dev_phy_addr = disagg_ioremap_virt_to_phys(addr);
+	uint64_t offset = disagg_ioremap_virt_to_offset(addr);
 
 #ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("mmio_write: Address: %llx\n", disagg_dev_phy_addr);
 #endif
 
-	dev_access_header.address = disagg_dev_phy_addr;
+	dev_access_header.address = offset;
 	dev_access_header.operation = DISAGG_DEV_OP_WRITE;
 	dev_access_header.length = size;
 

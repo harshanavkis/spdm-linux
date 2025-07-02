@@ -11,7 +11,7 @@
 
 /* Offsets in the shared memory with special values */
 #define OFFSET_PROXY_SHMEM (256)
-#define OFFSET_BAR_PHYS_ADDR (264)
+//#define OFFSET_BAR_PHYS_ADDR (264)
 
 ssize_t ivshmem_read(void *buf, size_t count, loff_t offset);
 ssize_t ivshmem_write(const void *buf, size_t count, loff_t offset);
