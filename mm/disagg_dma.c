@@ -333,7 +333,7 @@ static int disagg_dma_encrypt(void *from, void *to, size_t size)
 
 static int disagg_dma_decrypt(void *from, void *to, size_t size)
 {
-    struct scatterlist sg_src[2];
+    struct scatterlist sg_src[1];
     struct scatterlist sg_dst[1];
     int err;
 
@@ -345,10 +345,9 @@ static int disagg_dma_decrypt(void *from, void *to, size_t size)
     my_print_hexdump("Auth Tag: ", from, disagg_dma_allocator.crypto.authsize);
 #endif
 
-    sg_mark_end(&sg_src[1]);
+    sg_mark_end(&sg_src[0]);
     sg_mark_end(&sg_dst[0]);
-    sg_set_buf(&sg_src[0], from + disagg_dma_allocator.crypto.authsize, size);
-    sg_set_buf(&sg_src[1], from, disagg_dma_allocator.crypto.authsize);
+    sg_set_buf(&sg_src[0], from, size + disagg_dma_allocator.crypto.authsize);
     sg_set_buf(&sg_dst[0], to, size);
     aead_request_set_crypt(disagg_dma_allocator.crypto.req, sg_src, sg_dst, size + disagg_dma_allocator.crypto.authsize, disagg_dma_allocator.crypto.iv);
     err = crypto_wait_req(crypto_aead_decrypt(disagg_dma_allocator.crypto.req), &disagg_dma_allocator.crypto.wait);

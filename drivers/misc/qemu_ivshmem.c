@@ -191,7 +191,7 @@ int disagg_init_crypto_mmio(u8* key, int keylen)
     crypto->req = req;
     crypto->iv = iv;
     sg_set_buf(&crypto->sg_enc[1], crypto->buf_enc, crypto->authsize);
-    sg_set_buf(&crypto->sg_dec[1], crypto->buf_dec, crypto->authsize);
+    sg_set_buf(&crypto->sg_dec[0], crypto->buf_dec, crypto->size_buffers);
 
     return 0;
 
@@ -307,7 +307,6 @@ ssize_t ivshmem_read(void *buf, size_t count, loff_t offset)
     wait_for_read_doorbell_set();
 
     memcpy(crypto->buf_dec, ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, count + crypto->authsize);
-    sg_set_buf(&crypto->sg_dec[0], crypto->buf_dec + crypto->authsize, count);
 
     if (disagg_mmio_decrypt(crypto, buf, count))
 	return 0;

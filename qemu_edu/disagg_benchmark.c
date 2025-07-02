@@ -67,6 +67,7 @@ static struct file_operations my_fops = {
 
 /* Irq */
 
+/*
 static irqreturn_t my_irq_handler(int irq, void *dev)
 {
     int devi;
@@ -85,6 +86,7 @@ static irqreturn_t my_irq_handler(int irq, void *dev)
     }
     return ret;
 }
+*/
 
 /* Pci specific code */
 
@@ -111,6 +113,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
     /* IRQ setup */
     pci_set_master(dev);
 
+    /*
     if (pci_alloc_irq_vectors(dev, 1, 1, PCI_IRQ_MSI) < 0) {
 	dev_err(&(dev->dev), "Error: pci_alloc_irq_vectors failed\n");
 	goto error_irq_vectors;
@@ -122,6 +125,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	dev_err(&(dev->dev), "Error: request_irq failed\n");
 	goto error_requ_irq;
     }
+    */
 
     {
 	// Benchmarks 
@@ -133,34 +137,40 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	void *actual = kmalloc(dma_size, GFP_KERNEL);
 	if (actual == NULL) {
 	    pr_info("kmalloc failed");
-	    return 0;
+	    goto error_kmalloc;
 	}
 
 	memset(actual, 0xba, dma_size);
 
 	start = ktime_get();
+
 	dma_handle = dma_map_single(&(dev->dev), actual, dma_size, DMA_BIDIRECTIONAL);
+
+	// Proide device with information about the DMA transfer
+	writeq((u64)dma_handle, mmio + IO_DMA_SRC);
+	writeq(DMA_BASE, mmio + IO_DMA_DST);
+	writeq(dma_size, mmio + IO_DMA_CNT);
+	iowrite32(DMA_CMD, mmio + IO_DMA_CMD);
+	while(ioread32(mmio + IO_DMA_CMD) & 0x1) { pr_info("one poll loop\n"); }
+
 	end = ktime_get();
+
+	pr_info("time measured: %lu;%llu end", dma_size, (u64) ktime_to_ns(end) - (u64) ktime_to_ns(start));
 
 	if (dma_mapping_error(&(dev->dev), dma_handle)) {
 	    dev_info(&(dev->dev), "my_pci_probe: dma_alloc_coherent failed\n");
-	    return 0;
+	    goto error_kmalloc;
 	}
-
-	dma_sync_single_for_cpu(&(dev->dev), dma_handle, dma_size, DMA_BIDIRECTIONAL);
 
 	dma_unmap_single(&(dev->dev), dma_handle, dma_size, DMA_BIDIRECTIONAL);
 
-	pr_info("time measured: %lu;%llu end", dma_size, (u64) ktime_to_ns(end) - (u64) ktime_to_ns(start));
 
 	kfree(actual);
     }
 
     return 0;
 
-error_requ_irq:
-    pci_free_irq_vectors(dev);
-error_irq_vectors:
+error_kmalloc:
     pci_iounmap(dev, mmio);
     pci_release_region(dev, PCI_BAR);
 error_requ_reg:
@@ -172,8 +182,8 @@ error:
 static void my_pci_remove(struct pci_dev *dev)
 {
     dev_info(&dev->dev, "my_pci_remove\n");
-    free_irq(pci_irq_vector(dev, 0), &major);
-    pci_free_irq_vectors(dev);
+    //free_irq(pci_irq_vector(dev, 0), &major);
+    //pci_free_irq_vectors(dev);
     pci_iounmap(dev, mmio);
     pci_disable_device(dev);
     pci_release_region(dev, PCI_BAR); /* has to be called after disabling device */
