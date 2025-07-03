@@ -278,7 +278,7 @@ int disagg_dma_allocator_init(u8 *key, int keylen)
 
 	// Reads proxies DMA address from shmem
 	// This address can then be used to convert from proxyDMA to vmShmem
-	ivshmem_read_nonblocking(&disagg_dma_allocator.proxyDMA_start, sizeof(disagg_dma_allocator.proxyDMA_start), OFFSET_PROXY_SHMEM);
+	ivshmem_read_nonblocking(&disagg_dma_allocator.proxyDMA_start, sizeof(disagg_dma_allocator.proxyDMA_start), OFFSET_PROXY_DMA);
 
 	// Add the initial free memory region, which contains the whole free dma area
 	struct memory_region *first_region = kmalloc(sizeof(struct memory_region), GFP_KERNEL);
