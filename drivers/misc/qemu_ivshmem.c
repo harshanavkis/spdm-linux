@@ -64,8 +64,8 @@ static void *disagg_mmio_encrypt(struct disagg_crypto *crypto, const u8 *data, s
 
 #ifdef CONFIG_DISAGG_DEBUG_MMIO_SEC
     pr_info("cipher-size (only encrypted data): %ld\n", count);
-    my_print_hexdump("ciphertext: ", crypto->buf_enc + crypto->authsie, count);
-    my_print_hexdump("Auth tag: ", crypto->buf_enc + count, crypto->authsize);
+    my_print_hexdump("ciphertext: ", crypto->buf_enc + crypto->authsize, count);
+    my_print_hexdump("Auth tag: ", crypto->buf_enc, crypto->authsize);
     pr_info("\n");
 #endif
 

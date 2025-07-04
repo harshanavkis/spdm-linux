@@ -341,8 +341,8 @@ static int disagg_dma_decrypt(void *from, void *to, size_t size)
     pr_info("disagg_dma_decrypt:\n");
     pr_info("counter: %llu", *disagg_dma_allocator.crypto.counter);
     pr_info("cipher-size (only encrypted data): %ld\n", size);
-    my_print_hexdump("ciphertext: ", from + disagg_dma_allocator.crypto.authsize, size);
-    my_print_hexdump("Auth Tag: ", from, disagg_dma_allocator.crypto.authsize);
+    my_print_hexdump("ciphertext: ", from, size);
+    my_print_hexdump("Auth Tag: ", from + size, disagg_dma_allocator.crypto.authsize);
 #endif
 
     sg_mark_end(&sg_src[0]);
