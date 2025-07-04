@@ -130,13 +130,13 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
     {
 	// Benchmarks 
 	// Do one single dma_map_single with the buffer size of parameter @dma_size
-	pr_info("param size input: %lu", dma_size);
+	pr_info("param size input: %lu\n", dma_size);
 
 	ktime_t start, end;
 	dma_addr_t dma_handle;
 	void *actual = kmalloc(dma_size, GFP_KERNEL);
 	if (actual == NULL) {
-	    pr_info("kmalloc failed");
+	    pr_info("kmalloc failed\n");
 	    goto error_kmalloc;
 	}
 
@@ -155,7 +155,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	end = ktime_get();
 
-	pr_info("time measured: %lu;%llu end", dma_size, (u64) ktime_to_ns(end) - (u64) ktime_to_ns(start));
+	pr_info("time measured: %lu;%llu end\n", dma_size, (u64) ktime_to_ns(end) - (u64) ktime_to_ns(start));
 
 	if (dma_mapping_error(&(dev->dev), dma_handle)) {
 	    dev_info(&(dev->dev), "my_pci_probe: dma_alloc_coherent failed\n");

@@ -233,13 +233,13 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    if (memcmp(expected, actual, SIZE) != 0)
 			goto fail;
 
-		    pr_info("DMA test 1 passed");
+		    pr_info("DMA test 1 passed\n");
 		    kfree(actual);
 		    kfree(expected);
 		    goto end;
 
 		fail:
-		    pr_info("DMA test 1 failed");
+		    pr_info("DMA test 1 failed\n");
 		    kfree(actual);
 		    kfree(expected);
 		end:
@@ -365,11 +365,11 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size))
 			goto end2;
 
-		    pr_info("DMA test 2 passed");
+		    pr_info("DMA test 2 passed\n");
 		    goto end2_good;
 
 		end2:	
-		    pr_info("DMA test 2 failed");
+		    pr_info("DMA test 2 failed\n");
 		end2_good:
 		    kfree(actual1);
 		    kfree(actual2);
@@ -391,7 +391,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    /*** First buffer ***/
 		    dma_handle1 = dma_map_single(&(dev->dev), actual1, SIZE1, DMA_BIDIRECTIONAL);
 		    if (dma_mapping_error(&(dev->dev), dma_handle1)) {
-			pr_info("DMA test 3 failed with mapping error 1");
+			pr_info("DMA test 3 failed with mapping error 1\n");
 			goto kfree_3;
 		    }
 
@@ -405,7 +405,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    /*** Second buffer ***/
 		    dma_handle2 = dma_map_single(&(dev->dev), actual2, SIZE2, DMA_BIDIRECTIONAL);
 		    if (dma_mapping_error(&(dev->dev), dma_handle2)) {
-			pr_info("DMA test 3 failed with mapping error 2");
+			pr_info("DMA test 3 failed with mapping error 2\n");
 			goto unmap_3_1;
 		    }
 
@@ -430,7 +430,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    memset(expected, 0x11, SIZE1);
 		    memset(expected + 512, 0x22, 256);
 		    if (memcmp(expected, actual1, SIZE1) != 0) {
-			pr_info("first partial buffer update failed");
+			pr_info("first partial buffer update failed\n");
 			goto fail3;
 		    }
 
@@ -456,7 +456,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    memset(expected, 0x22, SIZE2);
 		    memset(expected + 1024, 0xff, 4);
 		    if (memcmp(expected, actual1, SIZE2) != 0) {
-			pr_info("second partial buffer update failed");
+			pr_info("second partial buffer update failed\n");
 			goto fail3;
 		    }
 
@@ -486,16 +486,16 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    memset(expected, 0xbb, SIZE2);
 		    memset(expected + 43, 0xee, 11);
 		    if (memcmp(expected, actual2, SIZE2) != 0) {
-			pr_info("third partial buffer update failed");
+			pr_info("third partial buffer update failed\n");
 			goto fail3;
 		    }
 
 
-		    pr_info("DMA test 3 passed");
+		    pr_info("DMA test 3 passed\n");
 		    goto unmap_3;
 
 		fail3:
-		    pr_info("DMA test 3 failed");
+		    pr_info("DMA test 3 failed\n");
 		unmap_3:
 		    dma_unmap_single(&(dev->dev), dma_handle2, SIZE2, DMA_BIDIRECTIONAL);
 		unmap_3_1:
@@ -521,7 +521,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 		    dma_handle1 = dma_map_single(&(dev->dev), actual1 + 30, SIZE1 - 30, DMA_BIDIRECTIONAL);
 		    if (dma_mapping_error(&(dev->dev), dma_handle1)) {
-			pr_info("DMA test 4 failed with mapping error 1");
+			pr_info("DMA test 4 failed with mapping error 1\n");
 			goto kfree_4;
 		    }
 		    writeq((u64)dma_handle1, mmio + IO_DMA_SRC);
@@ -532,7 +532,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 		    dma_handle2 = dma_map_single(&(dev->dev), actual2 + 1500, SIZE2 - 1500, DMA_BIDIRECTIONAL);
 		    if (dma_mapping_error(&(dev->dev), dma_handle2)) {
-			pr_info("DMA test 4 failed with mapping error 2");
+			pr_info("DMA test 4 failed with mapping error 2\n");
 			goto unmap_4_1;
 		    }
 		    writeq((u64)dma_handle2, mmio + IO_DMA_SRC);
@@ -575,17 +575,17 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    memset(expected + 1500 + 7, 0xdd, 20);
 		    memset(expected + 1500 + 7, 0xab, 4);
 		    if (memcmp(expected, actual2, SIZE2) != 0) {
-			pr_info("chaotic memory buffer update failed");
+			pr_info("chaotic memory buffer update failed\n");
 			goto fail4;
 		    }
 
 
-		    pr_info("DMA test 4 passed");
+		    pr_info("DMA test 4 passed\n");
 		    goto unmap_4;
 		    goto fail4;
 
 		fail4:
-		    pr_info("DMA test 4 failed");
+		    pr_info("DMA test 4 failed\n");
 		unmap_4:
 		    dma_unmap_single(&(dev->dev), dma_handle2, SIZE2 - 1500, DMA_BIDIRECTIONAL);
 		unmap_4_1:
