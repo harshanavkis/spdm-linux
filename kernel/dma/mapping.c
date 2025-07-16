@@ -16,6 +16,7 @@
 #include <linux/vmalloc.h>
 #include <linux/pci.h> /* for dev_is_pci and cast to pci_dev when checkinf for EDU */
 #include <linux/container_of.h> /* for casting to struct pci_dev */
+#include <linux/disagg.h>
 #include "debug.h"
 #include "direct.h"
 

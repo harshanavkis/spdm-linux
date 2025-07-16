@@ -7,6 +7,7 @@
 #include <linux/device.h> // for dev_* debugging messages
 #include <asm-generic/io.h> // for iowrite*/ioread*
 #include <linux/mm.h> // for disagg_test_check_dma_values
+#include <linux/disagg.h>
 
 #define QEMU_VENDOR_ID 0x1234
 #define QEMU_EDU_DEVICE_ID 0x11e8

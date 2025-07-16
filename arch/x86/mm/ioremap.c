@@ -30,7 +30,7 @@
 
 #include "physaddr.h"
 
-#include "misc/qemu_ivshmem.h" // for ivshmem_write_nonblocking
+#include <linux/disagg.h>
 
 /*
  * Descriptor controlling ioremap() behavior.
@@ -167,151 +167,6 @@ static void __ioremap_check_mem(resource_size_t addr, unsigned long size,
 
 	__ioremap_check_other(addr, desc);
 }
-
-struct guest_message_header dev_access_header = {
-	.operation = 0,
-	.address = 0xfea00004,
-	.length = 4
-};
-
-struct disagg_dev_ioremap_lookup disagg_ioremap_lookup;
-
-// Initialization function
-static int __init disagg_ioremap_lookup_init(void)
-{
-    disagg_ioremap_lookup.root = RB_ROOT;
-    spin_lock_init(&disagg_ioremap_lookup.lock);
-    return 0;
-}
-core_initcall(disagg_ioremap_lookup_init);
-
-void disagg_register_ioremap(unsigned long virt_addr, phys_addr_t phys_addr, size_t size)
-{
-    struct disagg_dev_ioremap_entry *entry = kmalloc(sizeof(*entry), GFP_KERNEL);
-    if (!entry)
-        return;
-
-    entry->virt_addr = virt_addr;
-    entry->phys_addr = phys_addr;
-    entry->size = size;
-
-    spin_lock(&disagg_ioremap_lookup.lock);
-    
-    struct rb_node **new = &disagg_ioremap_lookup.root.rb_node, *parent = NULL;
-    while (*new) {
-        struct disagg_dev_ioremap_entry *this = rb_entry(*new, struct disagg_dev_ioremap_entry, node);
-        parent = *new;
-        
-        if (virt_addr < this->virt_addr)
-            new = &((*new)->rb_left);
-        else if (virt_addr >= this->virt_addr + this->size)
-            new = &((*new)->rb_right);
-        else {
-            spin_unlock(&disagg_ioremap_lookup.lock);
-            kfree(entry);
-            return; // Overlapping region, don't insert
-        }
-    }
-
-    rb_link_node(&entry->node, parent, new);
-    rb_insert_color(&entry->node, &disagg_ioremap_lookup.root);
-    
-    spin_unlock(&disagg_ioremap_lookup.lock);
-}
-
-disagg_dev_mmio_tracker disagg_mmio_tracker;
-
-// Initialize the tracker
-void init_disagg_dev_mmio_tracker(void)
-{
-    disagg_mmio_tracker.root = RB_ROOT;
-    spin_lock_init(&disagg_mmio_tracker.lock);
-}
-
-static int __init disagg_mmio_tracker_init(void)
-{
-    init_disagg_dev_mmio_tracker();
-    return 0;
-}
-core_initcall(disagg_mmio_tracker_init);
-
-// Add a range to the tracker
-int add_disagg_dev_mmio_range(unsigned long start, unsigned long end)
-{
-    struct disagg_dev_mmio_range *range = kmalloc(sizeof(disagg_dev_mmio_range), GFP_KERNEL);
-    if (!range)
-        return -ENOMEM;
-
-    range->start = start;
-    range->end = end;
-
-    spin_lock(&disagg_mmio_tracker.lock);
-    rb_link_node(&range->node, NULL, &disagg_mmio_tracker.root.rb_node);
-    rb_insert_color(&range->node, &disagg_mmio_tracker.root);
-    spin_unlock(&disagg_mmio_tracker.lock);
-
-    return 0;
-}
-
-/*
- * Mark pages between addr and addr + size as not present
-*/
-void disagg_dev_mark_page_not_present(unsigned long start_addr, size_t size)
-{
-	unsigned long addr, end_addr;
-    pte_t *pte;
-    unsigned int level;
-
-    start_addr = PAGE_ALIGN(start_addr);
-    end_addr = PAGE_ALIGN(start_addr + size);
-
-    for (addr = start_addr; addr < end_addr; ) {
-        pte = lookup_address(addr, &level);
-        if (!pte) {
-            pr_err("Failed to find PTE for address 0x%lx\n", addr);
-            addr += PAGE_SIZE;
-            continue;
-        }
-
-        if (level == PG_LEVEL_4K) {
-            if (!pte_none(*pte)) {
-                pte_clear(&init_mm, addr, pte);
-#ifdef CONFIG_DISAGG_DEBUG_MMIO
-                pr_info("Marked 4K page at 0x%lx as not present\n", addr);
-#endif
-                flush_tlb_one_kernel(addr);
-            }
-            addr += PAGE_SIZE;
-        } 
-        else if (level == PG_LEVEL_2M) {
-            pmd_t *pmd = (pmd_t *)pte;
-            if (!pmd_none(*pmd)) {
-                pmd_clear(pmd);
-#ifdef CONFIG_DISAGG_DEBUG_MMIO
-                pr_info("Marked 2M page at 0x%lx as not present\n", addr);
-#endif
-                flush_tlb_kernel_range(addr, addr + PMD_SIZE);
-            }
-            addr += PMD_SIZE;
-        }
-        else {
-            pr_err("Unsupported page size for address 0x%lx (level %d)\n", addr, level);
-            addr += PAGE_SIZE;
-        }
-    }
-}
-
-/*
- * Gives information about bar physical address to the remote device
- */
-/*
-static void disagg_provide_physical_address(uint64_t bar_nr, uint64_t phys_addr)
-{
-    if (ivshmem_write_nonblocking(&phys_addr, sizeof(phys_addr), OFFSET_BAR_PHYS_ADDR) != sizeof(phys_addr)) {
-	pr_info("write of physical address failed\n");
-    }
-}
-*/
 
 /*
  * Remap an arbitrary physical address space into the kernel virtual
@@ -459,8 +314,7 @@ __ioremap_caller(resource_size_t phys_addr, unsigned long size,
 		pr_warn("caller %pS mapping multiple BARs\n", caller);
 	
 	uint8_t disagg_device_flags = this_cpu_read(ioremap_disagg_device_flags);
-	int disagg_bar_nr = this_cpu_read(ioremap_disagg_bar_nr);
-	pr_info("__ioremap_caller: disagg device flag is: %u, bar nr is: %d\n", disagg_device_flags, disagg_bar_nr);
+	pr_info("__ioremap_caller: disagg device flag is: %u\n", disagg_device_flags);
 
 	if (disagg_device_flags)
 	{
@@ -471,7 +325,6 @@ __ioremap_caller(resource_size_t phys_addr, unsigned long size,
 		disagg_dev_mark_page_not_present((unsigned long) ret_addr, size);
 	}
 	this_cpu_write(ioremap_disagg_device_flags, 0);
-	this_cpu_write(ioremap_disagg_bar_nr, -1);
 
 	return ret_addr;
 err_free_area:
