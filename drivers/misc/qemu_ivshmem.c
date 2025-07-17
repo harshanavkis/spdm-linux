@@ -136,7 +136,7 @@ size_t ivshmem_write_nonblocking(void *buf, size_t count, loff_t offset)
 }
 EXPORT_SYMBOL(ivshmem_write_nonblocking);
 
-ssize_t ivshmem_mmio_read(void *buf, size_t count)
+ssize_t ivshmem_mmio_region_read(void *buf, size_t count)
 {
     if (!ivs_dev_global || !ivs_dev_global->shmem)
         return -ENODEV;
@@ -149,10 +149,10 @@ ssize_t ivshmem_mmio_read(void *buf, size_t count)
 
     return count;
 }
-EXPORT_SYMBOL(ivshmem_mmio_read);
+EXPORT_SYMBOL(ivshmem_mmio_region_read);
 
 
-ssize_t ivshmem_mmio_write(const void *buf, size_t count)
+ssize_t ivshmem_mmio_region_write(const void *buf, size_t count)
 {
     if (!ivs_dev_global || !ivs_dev_global->shmem)
         return -ENODEV;
@@ -165,7 +165,7 @@ ssize_t ivshmem_mmio_write(const void *buf, size_t count)
 
     return count;
 }
-EXPORT_SYMBOL(ivshmem_mmio_write);
+EXPORT_SYMBOL(ivshmem_mmio_region_write);
 
 static int __init ivshmem_init(void)
 {

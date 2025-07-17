@@ -9,7 +9,7 @@
 int disagg_init_dma(u8 *key, int keylen);
 
 /*
- * Remote device MMIO tracking structures
+* Remote device MMIO tracking structures
 */
 struct disagg_dev_mmio_tracker {
 	struct rb_root root;
@@ -56,12 +56,12 @@ struct disagg_dev_ioremap_entry {
 	struct rb_node node;
 };
 
-#define DISAGG_DEV_OP_READ 1
-#define DISAGG_DEV_OP_WRITE 2
+#define DISAGG_DEV_OP_READ 0
+#define DISAGG_DEV_OP_WRITE 1
 
 /*
- * One entry corresponds to one mapped dma region
- */
+* One entry corresponds to one mapped dma region
+*/
 struct disagg_dma_entry {
 	struct rb_node node;
 	void *vmDMA; // start of this region
@@ -70,8 +70,8 @@ struct disagg_dma_entry {
 };
 
 /*
- * Used to keep track of free/used dma regions
- */
+* Used to keep track of free/used dma regions
+*/
 struct memory_region {
 	u64 proxyDMA;
 	size_t size;
@@ -79,8 +79,8 @@ struct memory_region {
 };
 
 /*
- * Data used in crypto operations
- */
+* Data used in crypto operations
+*/
 struct disagg_crypto {
 	struct crypto_aead *tfm; // Handle to transformation object
 	struct aead_request *req; // AEAD request which registers with the tfm object
@@ -91,21 +91,21 @@ struct disagg_crypto {
 };
 
 /*
- * Data used in MMIO
- */
+* Data used in MMIO
+*/
 struct disagg_mmio_data {
 	struct disagg_crypto crypto;
 	struct scatterlist sg[3]; // used by both encryption and decryption
 	struct scatterlist sg_enc[3]; // encryption output
 	struct scatterlist sg_dec[2]; // decryption input
-	u8 *buf_enc; // one-time allocated buffer for encryption output (including AD and auth)
+	u8 *buf_enc; // one-time allocated buffer for encryption output (including auth)
 	u8 *buf_dec; // one-time allocated buffer for decryption input
 	size_t size_buffers; // size of buffers (both have same size)
 };
 
 /*
- * Data used in DMA
- */
+* Data used in DMA
+*/
 struct disagg_dma_data {
 	struct disagg_crypto crypto;
 	void *vmShmem_start; // Virtual address of shmem mapping DMA starting point
@@ -117,8 +117,8 @@ struct disagg_dma_data {
 };
 
 /*
- * @key for crypto functionality
- */
+* @key for crypto functionality
+*/
 int disagg_init_mmio(u8 *key, int keylen);
 
 void disagg_exit_mmio(void);

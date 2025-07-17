@@ -17,9 +17,10 @@ static void my_print_hexdump(const char *prefix, const void *buf, size_t len) {
 
 /*
  * Encrypts @data of @count and prepends authentication tag.
- * @return buffer with result (size of return buffer == count + authsize)
+ * result in ctx.enc_buf + 1 (size of buffer == count + authsize)
+ * @return 0 for success
  */
-static void *encrypt(const u8 *data, size_t count)
+static int encrypt(const u8 *data, size_t count)
 {
 #ifdef CONFIG_DISAGG_DEBUG_MMIO_SEC
 	pr_info("disagg_mmio_encrypt:\n");
@@ -28,27 +29,27 @@ static void *encrypt(const u8 *data, size_t count)
 #endif
 
 	sg_set_buf(&ctx.sg[0], data, count);
-	sg_set_buf(&ctx.sg_enc[0], ctx.buf_enc + ctx.crypto.authsize, count);
+	sg_set_buf(&ctx.sg_enc[0], ctx.buf_enc + 1 + ctx.crypto.authsize, count);
 	aead_request_set_crypt(ctx.crypto.req, ctx.sg, ctx.sg_enc, count, ctx.crypto.iv);
 	if (crypto_wait_req(crypto_aead_encrypt(ctx.crypto.req), &ctx.crypto.wait)) {
 		pr_err("disagg_mmio_encrypt: encryption failed\n");
-		return NULL;
+		return 1;
 	}
 
 	++(*ctx.crypto.counter);
 
 #ifdef CONFIG_DISAGG_DEBUG_MMIO_SEC
 	pr_info("cipher-size (only encrypted data): %ld\n", count);
-	my_print_hexdump("Auth tag: ", ctx.buf_enc, ctx.crypto.authsize);
-	my_print_hexdump("ciphertext: ", ctx.buf_enc + ctx.crypto.authsize, count);
+	my_print_hexdump("Auth tag: ", ctx.buf_enc + 1, ctx.crypto.authsize);
+	my_print_hexdump("ciphertext: ", ctx.buf_enc + 1 + ctx.crypto.authsize, count);
 	pr_info("\n");
 #endif
 
-	return ctx.buf_enc;
+	return 0;
 }
 
 /*
- * Expects the encrypted data in @crypto->buf_dec. sizeof(data in crypto->buf_dec) == count + authsize
+ * Expects the encrypted data in @crypto->buf_dec + 1. sizeof(data in crypto->buf_dec + 1) == count + authsize
  * Writes the decrypted data into @buf.
  * Returns 1 for error, 0 for success
  */
@@ -60,8 +61,8 @@ static int decrypt(u8 *buf, size_t count)
 	pr_info("disagg_mmio_decrypt:\n");
 	pr_info("counter: %llu", *ctx.crypto.counter);
 	pr_info("cipher-size (only encrypted data): %ld\n", count);
-	my_print_hexdump("ciphertext: ", ctx.buf_dec, count);
-	my_print_hexdump("Auth Tag: ", ctx.buf_dec + count, ctx.crypto.authsize);
+	my_print_hexdump("ciphertext: ", ctx.buf_dec + 1, count);
+	my_print_hexdump("Auth Tag: ", ctx.buf_dec + 1 + count, ctx.crypto.authsize);
 #endif
 
 	sg_set_buf(&ctx.sg[0], buf, count);
@@ -87,27 +88,27 @@ static int decrypt(u8 *buf, size_t count)
 
 int mmio_read(u64 size, u64 addr, unsigned long *val)
 {
-	void *buf;
+	void *buf = ctx.buf_enc;
 	u64 offset = disagg_ioremap_virt_to_offset(addr);
 
 #ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("mmio_read: Address: %llx\n", addr);
 #endif
 
-	msg->address = offset;
 	msg->operation = DISAGG_DEV_OP_READ;
+	msg->address = offset;
 	msg->length = size;
 
-	buf = encrypt((void *)msg, sizeof(*msg) - sizeof(msg->value));
-	if (!buf)
+	if (encrypt((void *)msg, sizeof(*msg) - sizeof(msg->value)) != 0)
 		return 1;
 
-	ivshmem_mmio_write(buf, sizeof(*msg) - sizeof(msg->value) + ctx.crypto.authsize);
+	*((u8 *)buf) = DISAGG_DEV_OP_READ;
 
-	//ivshmem_mmio_read(ctx.buf_dec, sizeof(msg->value) + ctx.crypto.authsize);
-	ivshmem_mmio_read(ctx.buf_dec, size + ctx.crypto.authsize);
+	ivshmem_mmio_region_write(buf, 1 + ctx.crypto.authsize + (sizeof(*msg) - sizeof(msg->value)));
 
-	if (decrypt((void *)val, size) != 0)
+	ivshmem_mmio_region_read(ctx.buf_dec, 1 + sizeof(msg->value) + ctx.crypto.authsize);
+
+	if (decrypt((void *)val, sizeof(msg->value)) != 0)
 		return 1;
 
 	return 0;
@@ -115,29 +116,25 @@ int mmio_read(u64 size, u64 addr, unsigned long *val)
 
 int mmio_write(u64 size, u64 addr, unsigned long val)
 {
-	void *buf;
+	void *buf = ctx.buf_enc;
 	u64 offset = disagg_ioremap_virt_to_offset(addr);
 
 #ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("mmio_write: Address: %llx\n", addr);
 #endif
 
-	msg->address = offset;
 	msg->operation = DISAGG_DEV_OP_WRITE;
+	msg->address = offset;
 	msg->length = size;
 	msg->value = val;
 
-	buf = encrypt((void *)msg, sizeof(*msg) - sizeof(msg->value));
-	if (!buf)
+	if (encrypt((void *)msg, sizeof(*msg)) != 0)
 		return 1;
 
-	ivshmem_mmio_write(buf, sizeof(*msg) - sizeof(msg->value) + ctx.crypto.authsize);
+	// First byte of buf is reserved for unencrypted OP_TYPE
+	*((u8 *)buf) = DISAGG_DEV_OP_WRITE;
 
-
-	buf = encrypt((void *)&val, size);
-
-	ivshmem_mmio_write(buf, size + ctx.crypto.authsize);
-
+	ivshmem_mmio_region_write(buf, 1 + ctx.crypto.authsize + sizeof(*msg));
 
 	return 0;
 }
@@ -195,12 +192,12 @@ int disagg_init_mmio(u8 *key, int keylen)
 
 	// alloc buffers used in enc/dec
 	ctx.size_buffers = crypto->authsize + 64;
-	ctx.buf_enc = kmalloc(ctx.size_buffers, GFP_KERNEL); // extra 64 bytes for guest_message_header should be enough
+	ctx.buf_enc = kmalloc(ctx.size_buffers, GFP_KERNEL); // extra 64 bytes for mmio_msg is enough
 	if (!ctx.buf_enc) {
 		pr_err("disagg_init_crypto_mmio: kmalloc failed\n");
 		goto error_free_aead;
 	}
-	ctx.buf_dec = kmalloc(ctx.size_buffers, GFP_KERNEL); // extra 64 bytes for guest_message_header should be enough
+	ctx.buf_dec = kmalloc(ctx.size_buffers, GFP_KERNEL); // extra 64 bytes for mmio_msg is enough
 	if (!ctx.buf_dec) {
 		pr_err("disagg_init_crypto_mmio: kmalloc failed\n");
 		goto error_free_buf;
@@ -228,8 +225,8 @@ int disagg_init_mmio(u8 *key, int keylen)
 	crypto->tfm = tfm;
 	crypto->req = req;
 	crypto->iv = iv;
-	sg_set_buf(&ctx.sg_enc[1], ctx.buf_enc, crypto->authsize);
-	sg_set_buf(&ctx.sg_dec[0], ctx.buf_dec, ctx.size_buffers);
+	sg_set_buf(&ctx.sg_enc[1], ctx.buf_enc + 1, crypto->authsize);
+	sg_set_buf(&ctx.sg_dec[0], ctx.buf_dec + 1, ctx.size_buffers - 1);
 
 	// Alloc message structure object
 	msg = kmalloc(sizeof(*msg), GFP_KERNEL);
