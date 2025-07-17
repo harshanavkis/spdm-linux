@@ -39,8 +39,8 @@ static void *encrypt(const u8 *data, size_t count)
 
 #ifdef CONFIG_DISAGG_DEBUG_MMIO_SEC
 	pr_info("cipher-size (only encrypted data): %ld\n", count);
-	my_print_hexdump("ciphertext: ", ctx.buf_enc + ctx.crypto.authsize, count);
 	my_print_hexdump("Auth tag: ", ctx.buf_enc, ctx.crypto.authsize);
+	my_print_hexdump("ciphertext: ", ctx.buf_enc + ctx.crypto.authsize, count);
 	pr_info("\n");
 #endif
 
@@ -134,7 +134,7 @@ int mmio_write(u64 size, u64 addr, unsigned long val)
 	ivshmem_mmio_write(buf, sizeof(*msg) - sizeof(msg->value) + ctx.crypto.authsize);
 
 
-	buf = encrypt((void *)val, size);
+	buf = encrypt((void *)&val, size);
 
 	ivshmem_mmio_write(buf, size + ctx.crypto.authsize);
 

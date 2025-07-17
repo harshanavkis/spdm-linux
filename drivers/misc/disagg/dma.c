@@ -491,6 +491,10 @@ int disagg_init_dma(u8 *key, int keylen)
 	ctx.crypto.req = req;
 	ctx.crypto.iv = iv;
 
+	// Set the remaining fields in ctx
+	ctx.vmShmem_start = get_shmem() + DMA_REGION_OFFSET;
+	ctx.dma_area_size = DMA_SIZE;
+
 	// Reads proxies DMA address from shmem
 	// This address can then be used to convert from proxyDMA to vmShmem
 	ivshmem_read_nonblocking(&ctx.proxyDMA_start, sizeof(ctx.proxyDMA_start), OFFSET_PROXY_DMA);
@@ -504,10 +508,6 @@ int disagg_init_dma(u8 *key, int keylen)
 	first_region->proxyDMA = ctx.proxyDMA_start;
 	first_region->size = ctx.dma_area_size;
 	list_add(&first_region->list, &ctx.free_list);
-
-	// Set the remaining fields in ctx
-	ctx.vmShmem_start = get_shmem() + DMA_REGION_OFFSET;
-	ctx.dma_area_size = DMA_SIZE;
 
 	return 0;
 
