@@ -313,18 +313,13 @@ __ioremap_caller(resource_size_t phys_addr, unsigned long size,
 	if (iomem_map_sanity_check(unaligned_phys_addr, unaligned_size))
 		pr_warn("caller %pS mapping multiple BARs\n", caller);
 	
-	uint8_t disagg_device_flags = this_cpu_read(ioremap_disagg_device_flags);
-	pr_info("__ioremap_caller: disagg device flag is: %u\n", disagg_device_flags);
-
-	if (disagg_device_flags)
-	{
+	if (disagg_is_dev_addr(unaligned_phys_addr, unaligned_size)) {
 		pr_info("bar: pyhs_adr: %llx, size: %ld\n", phys_addr, size);
 		add_disagg_dev_mmio_range((unsigned long)ret_addr, (unsigned long)ret_addr + size - 1);
 		disagg_register_ioremap((unsigned long) ret_addr, phys_addr, size);
 		//disagg_provide_physical_address(disagg_bar_nr, phys_addr);
 		disagg_dev_mark_page_not_present((unsigned long) ret_addr, size);
 	}
-	this_cpu_write(ioremap_disagg_device_flags, 0);
 
 	return ret_addr;
 err_free_area:

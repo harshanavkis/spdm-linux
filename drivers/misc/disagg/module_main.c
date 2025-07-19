@@ -6,21 +6,42 @@
 
 bool disagg_is_dev(struct device *dev) 
 {
-    struct pci_dev *pdev;
+	struct pci_dev *pdev;
 
-    if (dev_is_pci(dev)) {
-	pdev = container_of(dev, struct pci_dev, dev);
-    } else {
-	return false;
-    }
+	if (dev_is_pci(dev))
+		pdev = container_of(dev, struct pci_dev, dev);
+	else
+		return false;
 
-    if (unlikely((pdev->vendor == 0x1234) && (pdev->device == 0x11e8))) {
-	return true;
-    } else {
-	return false;
-    }
+	if (unlikely((pdev->vendor == DISAGG_VENDOR_ID) && (pdev->device == DISAGG_DEVICE_ID)))
+		return true;
+	else
+		return false;
+	
 }
 EXPORT_SYMBOL(disagg_is_dev);
+
+bool disagg_is_dev_addr(resource_size_t phys_addr, unsigned long size)
+{
+	struct pci_dev *pdev;
+	struct resource res = { .start = phys_addr, .end = phys_addr + size, };
+	bool ret = false;
+
+	pdev = pci_get_device(DISAGG_VENDOR_ID, DISAGG_DEVICE_ID, NULL);
+
+	if (!pdev)
+		return false;
+
+	if (!pci_find_resource(pdev, &res))
+		ret = false;
+	else 
+		ret = true;
+
+	pci_dev_put(pdev);
+	return ret;
+
+}
+EXPORT_SYMBOL(disagg_is_dev_addr);
 
 // Initialize the GCM AEAD objects
 static int disagg_crypto_objects_init(void)

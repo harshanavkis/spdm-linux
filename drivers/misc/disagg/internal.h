@@ -6,6 +6,9 @@
 #include <crypto/aead.h>
 #include <linux/scatterlist.h>
 
+#define DISAGG_VENDOR_ID (0x1234)
+#define DISAGG_DEVICE_ID (0x11e8)
+
 int disagg_init_dma(u8 *key, int keylen);
 
 /*

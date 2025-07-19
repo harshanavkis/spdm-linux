@@ -1476,8 +1476,7 @@ handle_page_fault(struct pt_regs *regs, unsigned long error_code,
 	if (unlikely(kmmio_fault(regs, address)))
 		return;
 	
-	if (unlikely(disagg_is_tracked_mmio(address)))
-	{
+	if (unlikely(disagg_is_tracked_mmio(address))) {
 		disagg_mmio_fault_handler(regs, error_code, address);
 #ifdef CONFIG_DISAGG_DEBUG_MMIO
 		pr_info("handle_page_fault: iptr: %lu\n", regs->ip);

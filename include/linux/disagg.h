@@ -2,9 +2,6 @@
 #define __LINUX_DISAGG_H__
 
 #include <linux/device.h>
-#include <linux/percpu.h>
-
-DECLARE_PER_CPU(uint8_t, ioremap_disagg_device_flags);
 
 /*
  * @return true if @dev is the disaggragated device
@@ -30,6 +27,11 @@ void disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code
  * @return true if this address is part of a disagg dev MMIO region
  */
 bool disagg_is_tracked_mmio(unsigned long addr);
+
+/*
+ * @return true if (@addr, @size) is a BAR from disaggregated device
+ */
+bool disagg_is_dev_addr(resource_size_t phys_addr, unsigned long size);
 
 
 /********************************************************/
