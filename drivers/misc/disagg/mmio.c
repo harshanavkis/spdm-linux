@@ -70,7 +70,7 @@ static int decrypt(u8 *buf, size_t count)
 	err = crypto_wait_req(crypto_aead_decrypt(ctx.crypto.req), &ctx.crypto.wait);
 	if (err) {
 		if (err == -EBADMSG) {
-			pr_err("disagg_mmio_decrypt: Authetication failed\n");
+			pr_err("disagg_mmio_decrypt: Authentication failed\n");
 			return 1;
 		}
 		pr_err("disagg_mmio_decrypt: decryption failed\n");

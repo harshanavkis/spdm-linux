@@ -24,7 +24,7 @@ EXPORT_SYMBOL(disagg_is_dev);
 bool disagg_is_dev_addr(resource_size_t phys_addr, unsigned long size)
 {
 	struct pci_dev *pdev;
-	struct resource res = { .start = phys_addr, .end = phys_addr + size, };
+	struct resource res = { .start = phys_addr, .end = phys_addr + size - 1, .flags = IORESOURCE_MEM };
 	bool ret = false;
 
 	pdev = pci_get_device(DISAGG_VENDOR_ID, DISAGG_DEVICE_ID, NULL);
@@ -39,7 +39,6 @@ bool disagg_is_dev_addr(resource_size_t phys_addr, unsigned long size)
 
 	pci_dev_put(pdev);
 	return ret;
-
 }
 EXPORT_SYMBOL(disagg_is_dev_addr);
 
