@@ -59,7 +59,6 @@ static int find_free_region(size_t size, dma_addr_t *proxyDMA) {
 	if (data->size >= size) {
 	    *proxyDMA = data->proxyDMA;
 	    remove_region(data, size);
-    pr_info("find_free_region: found free region 0x%llx\n", *proxyDMA);
 	    return 0;
 	}
     }
