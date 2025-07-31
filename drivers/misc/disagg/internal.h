@@ -26,6 +26,8 @@ struct disagg_dev_mmio_range {
 };
 
 struct mmio_message {
+	u8 op;
+
 	/* 
 	 * Operation type (OP_READ or OP_WRITE)
 	 */
@@ -82,35 +84,9 @@ struct memory_region {
 };
 
 /*
-* Data used in crypto operations
-*/
-struct disagg_crypto {
-	struct crypto_aead *tfm; // Handle to transformation object
-	struct aead_request *req; // AEAD request which registers with the tfm object
-	struct crypto_wait wait; // Used to make calls to crypto API synchronous
-	size_t authsize;
-	u8 *iv;
-	u64 *counter; // for freshness, used as the iv
-};
-
-/*
-* Data used in MMIO
-*/
-struct disagg_mmio_data {
-	struct disagg_crypto crypto;
-	struct scatterlist sg[3]; // used by both encryption and decryption
-	struct scatterlist sg_enc[3]; // encryption output
-	struct scatterlist sg_dec[2]; // decryption input
-	u8 *buf_enc; // one-time allocated buffer for encryption output (including auth)
-	u8 *buf_dec; // one-time allocated buffer for decryption input
-	size_t size_buffers; // size of buffers (both have same size)
-};
-
-/*
 * Data used in DMA
 */
 struct disagg_dma_data {
-	struct disagg_crypto crypto;
 	void *vmShmem_start; // Virtual address of shmem mapping DMA starting point
 	size_t dma_area_size; // Size in bytes available for DMA allocations in shmem
 	u64 proxyDMA_start; // virtual starting address of proxie's unencrypted DMA region

@@ -183,78 +183,6 @@ static void add_region_to_free_list(u64 proxyDMA, size_t size) {
     }
 }
 
-static int disagg_dma_encrypt(void *from, void *to, size_t size)
-{
-    struct scatterlist sg_src[1];
-    struct scatterlist sg_dst[2];
-
-#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
-    pr_info("disagg_dma_encrypt:\n");
-    pr_info("counter: %llu", *ctx.crypto.counter);
-    my_print_hexdump("Plaintext: ", from, size);
-#endif
-
-    sg_mark_end(&sg_src[0]);
-    sg_mark_end(&sg_dst[1]);
-    sg_set_buf(&sg_src[0], from, size);
-    sg_set_buf(&sg_dst[0], to + ctx.crypto.authsize, size);
-    sg_set_buf(&sg_dst[1], to, ctx.crypto.authsize);
-    aead_request_set_crypt(ctx.crypto.req, sg_src, sg_dst, size, ctx.crypto.iv);
-    if (crypto_wait_req(crypto_aead_encrypt(ctx.crypto.req), &ctx.crypto.wait)) {
-	pr_err("disagg_dma_encrypt: encryption failed\n");
-	return 1;
-    }
-     
-    ++(*ctx.crypto.counter);
-
-#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
-    pr_info("cipher-size (only encrypted data): %ld\n", size);
-    my_print_hexdump("ciphertext: ", to + ctx.crypto.authsize, size);
-    my_print_hexdump("Auth tag: ", to, ctx.crypto.authsize);
-    pr_info("\n");
-#endif
-
-    return 0;
-}
-
-static int disagg_dma_decrypt(void *from, void *to, size_t size)
-{
-    struct scatterlist sg_src[1];
-    struct scatterlist sg_dst[1];
-    int err;
-
-#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
-    pr_info("disagg_dma_decrypt:\n");
-    pr_info("counter: %llu", *ctx.crypto.counter);
-    pr_info("cipher-size (only encrypted data): %ld\n", size);
-    my_print_hexdump("ciphertext: ", from, size);
-    my_print_hexdump("Auth Tag: ", from + size, ctx.crypto.authsize);
-#endif
-
-    sg_mark_end(&sg_src[0]);
-    sg_mark_end(&sg_dst[0]);
-    sg_set_buf(&sg_src[0], from, size + ctx.crypto.authsize);
-    sg_set_buf(&sg_dst[0], to, size);
-    aead_request_set_crypt(ctx.crypto.req, sg_src, sg_dst, size + ctx.crypto.authsize, ctx.crypto.iv);
-    err = crypto_wait_req(crypto_aead_decrypt(ctx.crypto.req), &ctx.crypto.wait);
-    if (err) {
-	if (err == -EBADMSG) {
-	    pr_err("disagg_dma_decrypt: Authetication failed\n");
-	    return 1;
-	}
-	pr_err("disagg_dma_decrypt: decryption failed\n");
-	return 1;
-    }
-
-#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
-    my_print_hexdump("Plaintext: ", to, size);
-    pr_info("\n");
-#endif
-
-    ++(*ctx.crypto.counter);
-    return 0;
-}
-
 dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size_t offset, size_t size, enum dma_data_direction dir, unsigned long attrs) 
 {
     struct disagg_dma_entry *new_entry;
@@ -274,7 +202,7 @@ dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size
     spin_lock(&ctx.lock);
 
     // just a simple one page allocator
-    if (find_free_region(size + ctx.crypto.authsize, &proxyDMA) != 0) {
+    if (find_free_region(size, &proxyDMA) != 0) {
 	pr_err("disagg_dma_map_page_attrs: request not fulfillable");
 	goto error;
     }
@@ -290,8 +218,8 @@ dma_addr_t disagg_dma_map_page_attrs(struct device *dev, struct page *page, size
 
     vmShmem = proxyDMA_to_vmShmem(proxyDMA);
 
-    // Encrypt the data to shmem
-    disagg_dma_encrypt(vmDMA, vmShmem, size);
+    // Copy the data to shmem
+    memcpy(vmShmem, vmDMA, size);
 
     spin_unlock(&ctx.lock);
 
@@ -324,7 +252,7 @@ void disagg_dma_unmap_page_attrs(struct device *dev, dma_addr_t proxyDMA, size_t
     rb_erase(&entry->node, &ctx.entry_root);
     kfree(entry);
 
-    add_region_to_free_list(proxyDMA, size + ctx.crypto.authsize); 
+    add_region_to_free_list(proxyDMA, size); 
 
     spin_unlock(&ctx.lock);
 
@@ -354,7 +282,7 @@ void disagg___dma_sync_single_for_cpu(struct device *dev, dma_addr_t proxyDMA, s
 
     offset = proxyDMA - entry->proxyDMA;
 
-    disagg_dma_decrypt(proxyDMA_to_vmShmem(proxyDMA), entry->vmDMA + offset, size);
+    memcpy(entry->vmDMA + offset, proxyDMA_to_vmShmem(proxyDMA), size);
 
     spin_unlock(&ctx.lock);
 
@@ -383,8 +311,7 @@ void disagg___dma_sync_single_for_device(struct device *dev, dma_addr_t proxyDMA
 
     offset = proxyDMA - entry->proxyDMA;
     
-    // Encrypt data into virtual address space
-    disagg_dma_encrypt(entry->vmDMA + offset, proxyDMA_to_vmShmem(proxyDMA), size);
+    memcpy(proxyDMA_to_vmShmem(proxyDMA), entry->vmDMA + offset, size);
 
     spin_unlock(&ctx.lock);
 
@@ -422,75 +349,6 @@ int disagg_init_dma(u8 *key, int keylen)
 	INIT_LIST_HEAD(&ctx.free_list);
 	spin_lock_init(&ctx.lock);
 
-	ctx.crypto.authsize = 16; // size of the authentication code
-	struct crypto_aead *tfm = NULL;
-	struct aead_request *req = NULL;
-	u8 *iv = NULL;
-	int iv_size = 0;
-	int adlen = 0; // No ad in our case
-
-	// Create transformation object
-	tfm = crypto_alloc_aead("gcm(aes)", 0, 0);
-	if (IS_ERR(tfm)) {
-	    pr_err("disagg_dma_init: AES/GCM alloc_aead failed\n");
-	    return 1;
-	} else {
-	    pr_info("disagg_dma_init: gcm(aes): name: %s, driver_name: %s\n", tfm->base.__crt_alg->cra_name, tfm->base.__crt_alg->cra_driver_name);
-	}
-
-	// Init IV
-	iv_size = crypto_aead_ivsize(tfm);
-	pr_info("iv_size: %d", iv_size);
-	if (iv_size < sizeof(ctx.crypto.counter)) {
-	    pr_info("disagg_dma_init: iv_size too small for this implementation");
-	    goto error_free_aead;
-	}
-	iv = kmalloc(iv_size, GFP_KERNEL);
-	if (iv == NULL) {
-	    pr_err("disagg_dma_init: kmalloc of IV-space failed\n");
-	    goto error_free_aead;
-	}
-	memset((void *) iv, 0x0, iv_size);
-	// IV will alias the counter, allows freshness
-	ctx.crypto.counter = (u64 *) iv;
-	*ctx.crypto.counter = 0;
-
-	// Init and set key 
-	memset((void *) key, 0x00, keylen);
-	if (crypto_aead_setkey(tfm, key, keylen) < 0) {
-	    pr_err("disagg_dma_init: setkey failed\n");
-	    goto error_free_aead;
-	}
-
-	// Set size of authentication code
-	if (crypto_aead_setauthsize(tfm, ctx.crypto.authsize) < 0) {
-	    pr_err("disagg_dma_init: setauthsize failed\n");
-	    goto error_free_aead;
-	}
-
-	crypto_aead_clear_flags(tfm, ~0);
-
-	// Obtain the request structures
-	req = aead_request_alloc(tfm, GFP_KERNEL);
-	if (req == NULL) {
-	    pr_err("disagg_dma_init: request_alloc failed\n");
-	    goto error_free_aead;
-	}
-
-	// Init wait object
-	crypto_init_wait(&ctx.crypto.wait);
-
-	// Set callback function which will never be called, because we wait synchronously
-	aead_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG, crypto_req_done, &ctx.crypto.wait);
-
-	// Set size of associated data
-	// no AD in our case
-	aead_request_set_ad(req, adlen);
-
-	ctx.crypto.tfm = tfm;
-	ctx.crypto.req = req;
-	ctx.crypto.iv = iv;
-
 	// Set the remaining fields in ctx
 	ctx.vmShmem_start = get_shmem() + DMA_REGION_OFFSET;
 	ctx.dma_area_size = DMA_SIZE;
@@ -512,8 +370,6 @@ int disagg_init_dma(u8 *key, int keylen)
 	return 0;
 
 error_free_aead:
-	crypto_free_aead(tfm);
-	kfree(iv);
 	return 1;
 }
 
