@@ -354,7 +354,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		    if (dma_mapping_error(&(dev->dev), dma_handle5)) {
 			    goto end2;
 		    }
-		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size - 2 * (1 << 12)))
+		    if (!disagg_test_check_dma_values(1, 0, initial_dma_size - 1 * (1 << 12)))
 			goto end2;
 		    writeq((u64)dma_handle5, mmio + IO_DMA_SRC);
 		    writeq(DMA_BASE, mmio + IO_DMA_DST);
