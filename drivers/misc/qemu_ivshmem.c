@@ -4,22 +4,23 @@
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/io.h>
+#include <linux/mm.h>
 #include <misc/qemu_ivshmem.h>
-
 #define DRIVER_NAME "ivshmem_driver"
-#define READ_DOORBELL_OFFSET 0
-#define WRITE_DOORBELL_OFFSET 1
-#define DOORBELL_SIZE 1  // 1 byte for each doorbell
-#define TOTAL_DOORBELL_SIZE (DOORBELL_SIZE * 2)
 
 struct ivshmem_dev {
-    struct pci_dev *pdev;
-    void __iomem *shmem;
-    size_t shmem_size;
+	struct pci_dev *pdev;
+	void __iomem *shmem;
+	size_t shmem_size;
 };
 
 static struct ivshmem_dev *ivs_dev_global;
 
+void *get_shmem(void)
+{
+	return ivs_dev_global->shmem;
+}
+EXPORT_SYMBOL(get_shmem);
 
 static int ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
@@ -70,6 +71,7 @@ static void ivshmem_remove(struct pci_dev *pdev)
     pci_release_regions(pdev);
     pci_disable_device(pdev);
     kfree(ivs_dev);
+
     ivs_dev_global = NULL;
 }
 
@@ -98,56 +100,81 @@ static void wait_for_write_doorbell_clear(void)
         cpu_relax();
 }
 
-ssize_t ivshmem_read(void *buf, size_t count, loff_t offset)
+// another shared memory read to a non-mmio region (no need for doorbells)
+// does really read at offset (not at offset + TOTAL_DOORBELL_SIZE like the other read)
+ssize_t ivshmem_read_nonblocking(void *buf, size_t count, loff_t offset)
 {
     if (!ivs_dev_global || !ivs_dev_global->shmem)
         return -ENODEV;
 
-    if (offset >= ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE)
+    if (offset >= ivs_dev_global->shmem_size)
         return 0;
 
-    if (offset + count > ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE)
-        count = ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE - offset;
+    if (offset + count > ivs_dev_global->shmem_size)
+        count = ivs_dev_global->shmem_size - offset;
+
+    memcpy(buf, ivs_dev_global->shmem + offset, count);
+
+    return count;
+}
+EXPORT_SYMBOL(ivshmem_read_nonblocking);
+
+size_t ivshmem_write_nonblocking(void *buf, size_t count, loff_t offset)
+{
+    if (!ivs_dev_global || !ivs_dev_global->shmem)
+        return -ENODEV;
+
+    if (offset >= ivs_dev_global->shmem_size)
+        return -1;
+
+    if (offset + count > ivs_dev_global->shmem_size)
+        count = ivs_dev_global->shmem_size - offset;
+
+    memcpy(ivs_dev_global->shmem + offset, buf, count);
+
+    return count;
+}
+EXPORT_SYMBOL(ivshmem_write_nonblocking);
+
+ssize_t ivshmem_mmio_region_read(void *buf, size_t count)
+{
+    if (!ivs_dev_global || !ivs_dev_global->shmem)
+        return -ENODEV;
 
     wait_for_read_doorbell_set();
 
-    memcpy_fromio(buf, ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, count);
+    memcpy(buf, ivs_dev_global->shmem + MMIO_REGION_OFFSET, count);
 
     writeb(0, ivs_dev_global->shmem + READ_DOORBELL_OFFSET);
 
     return count;
 }
-EXPORT_SYMBOL(ivshmem_read);
+EXPORT_SYMBOL(ivshmem_mmio_region_read);
 
-ssize_t ivshmem_write(const void *buf, size_t count, loff_t offset)
+
+ssize_t ivshmem_mmio_region_write(const void *buf, size_t count)
 {
     if (!ivs_dev_global || !ivs_dev_global->shmem)
         return -ENODEV;
 
-    if (offset >= ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE)
-        return -ENOSPC;
-
-    if (offset + count > ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE)
-        count = ivs_dev_global->shmem_size - TOTAL_DOORBELL_SIZE - offset;
-
     wait_for_write_doorbell_clear();
 
-    memcpy_toio(ivs_dev_global->shmem + TOTAL_DOORBELL_SIZE + offset, buf, count);
+    memcpy(ivs_dev_global->shmem + MMIO_REGION_OFFSET, buf, count);
 
     writeb(1, ivs_dev_global->shmem + WRITE_DOORBELL_OFFSET);
 
     return count;
 }
-EXPORT_SYMBOL(ivshmem_write);
+EXPORT_SYMBOL(ivshmem_mmio_region_write);
 
 static int __init ivshmem_init(void)
 {
-    return pci_register_driver(&ivshmem_driver);
+	return pci_register_driver(&ivshmem_driver);
 }
 
 static void __exit ivshmem_exit(void)
 {
-    pci_unregister_driver(&ivshmem_driver);
+	pci_unregister_driver(&ivshmem_driver);
 }
 
 module_init(ivshmem_init);
@@ -156,3 +183,4 @@ module_exit(ivshmem_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Harshavardhan Unnibhavi");
 MODULE_DESCRIPTION("QEMU ivshmem PCI driver with polling synchronization");
+

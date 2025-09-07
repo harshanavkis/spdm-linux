@@ -14,6 +14,9 @@
 #include <linux/of_device.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
+#include <linux/pci.h> /* for dev_is_pci and cast to pci_dev when checkinf for EDU */
+#include <linux/container_of.h> /* for casting to struct pci_dev */
+#include <linux/disagg.h>
 #include "debug.h"
 #include "direct.h"
 
@@ -156,7 +159,9 @@ dma_addr_t dma_map_page_attrs(struct device *dev, struct page *page,
 	if (WARN_ON_ONCE(!dev->dma_mask))
 		return DMA_MAPPING_ERROR;
 
-	if (dma_map_direct(dev, ops) ||
+	if (unlikely(disagg_is_dev(dev))) {
+		addr = disagg_dma_map_page_attrs(dev, page, offset, size, dir, attrs);
+	} else if (dma_map_direct(dev, ops) ||
 	    arch_dma_map_page_direct(dev, page_to_phys(page) + offset + size))
 		addr = dma_direct_map_page(dev, page, offset, size, dir, attrs);
 	else
@@ -174,7 +179,10 @@ void dma_unmap_page_attrs(struct device *dev, dma_addr_t addr, size_t size,
 	const struct dma_map_ops *ops = get_dma_ops(dev);
 
 	BUG_ON(!valid_dma_direction(dir));
-	if (dma_map_direct(dev, ops) ||
+
+	if (unlikely(disagg_is_dev(dev))) {
+		disagg_dma_unmap_page_attrs(dev, addr, size, dir, attrs);
+	} else if (dma_map_direct(dev, ops) ||
 	    arch_dma_unmap_page_direct(dev, addr + size))
 		dma_direct_unmap_page(dev, addr, size, dir, attrs);
 	else if (ops->unmap_page)
@@ -336,6 +344,8 @@ void __dma_sync_single_for_cpu(struct device *dev, dma_addr_t addr, size_t size,
 	const struct dma_map_ops *ops = get_dma_ops(dev);
 
 	BUG_ON(!valid_dma_direction(dir));
+	if (unlikely(disagg_is_dev(dev)))
+		disagg___dma_sync_single_for_cpu(dev, addr, size, dir);
 	if (dma_map_direct(dev, ops))
 		dma_direct_sync_single_for_cpu(dev, addr, size, dir);
 	else if (ops->sync_single_for_cpu)
@@ -350,6 +360,8 @@ void __dma_sync_single_for_device(struct device *dev, dma_addr_t addr,
 	const struct dma_map_ops *ops = get_dma_ops(dev);
 
 	BUG_ON(!valid_dma_direction(dir));
+	if (unlikely(disagg_is_dev(dev)))
+		disagg___dma_sync_single_for_device(dev, addr, size, dir);
 	if (dma_map_direct(dev, ops))
 		dma_direct_sync_single_for_device(dev, addr, size, dir);
 	else if (ops->sync_single_for_device)
