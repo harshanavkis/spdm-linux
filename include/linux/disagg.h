@@ -73,6 +73,16 @@ void disagg___dma_sync_single_for_device(struct device *dev,
 					 enum dma_data_direction dir);
 
 /*
+ * Hook into dma_alloc_attrs
+ */
+void *disagg_dma_alloc_attrs(struct device *dev, size_t size, dma_addr_t *dma_handle);
+
+/*
+ * Hook into dma_free_attrs
+ */
+void disagg_dma_free_attrs(struct device *dev, size_t size, void *cpu_addr, dma_addr_t dma_handle);
+
+/*
  * A testing function to check if the dma allocator has the expected values.
  * @nodes are the expected number of nodes contained in the free_list.
  * @idx specifies the list entry which should be of @size_at_idx.

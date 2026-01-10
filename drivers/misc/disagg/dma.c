@@ -8,7 +8,7 @@
 
 static struct disagg_dma_data ctx;
 
-#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
+#ifdef HELLO //CONFIG_DISAGG_DEBUG_DMA_SEC
 static void my_print_hexdump(const char *prefix, const void *buf, size_t len) {
     print_hex_dump(KERN_INFO, prefix, DUMP_PREFIX_NONE, 32, 1, buf, len, false);
 }
@@ -322,6 +322,81 @@ error:
     pr_info("disagg___dma_sync_single_for_device failed\n");
 }
 EXPORT_SYMBOL(disagg___dma_sync_single_for_device);
+
+void *disagg_dma_alloc_attrs(struct device *dev, size_t size, dma_addr_t *dma_handle)
+{
+    struct disagg_dma_entry *new_entry;
+    dma_addr_t proxyDMA;
+
+#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
+    pr_info("disagg_dma_alloc_attrs\n");
+#endif
+
+    if (ctx.vmShmem_start == NULL) {
+	    pr_err("disagg_dma_map_page_attrs: shared memory not yet ready\n");
+	    return NULL;
+    }
+
+    spin_lock(&ctx.lock);
+
+    // just a simple one page allocator
+    if (find_free_region(size, &proxyDMA) != 0) {
+	pr_err("disagg_dma_alloc_attrs: request not fulfillable");
+	goto error;
+    }
+
+    new_entry = kmalloc(sizeof(struct disagg_dma_entry), GFP_KERNEL);
+
+    new_entry->proxyDMA = proxyDMA;
+    new_entry->vmDMA = proxyDMA_to_vmShmem(proxyDMA);
+    new_entry->size = size;
+
+    *dma_handle = proxyDMA;
+
+    disagg_insert_entry(new_entry);
+    // end of allocator
+
+    spin_unlock(&ctx.lock);
+
+#ifdef CONFIG_DISAGG_DEBUG_DMA_SEC
+    pr_info("disagg_dma_alloc_attrs: dma_handle: 0x%llx\n", (uint64_t) proxyDMA);
+#endif
+
+    return new_entry->vmDMA;
+
+error:
+    spin_unlock(&ctx.lock);
+    pr_info("disagg_dma_alloc_attrs failed\n");
+    return NULL;
+}
+EXPORT_SYMBOL(disagg_dma_alloc_attrs);
+
+void disagg_dma_free_attrs(struct device *dev, size_t size, void *cpu_addr, dma_addr_t proxyDMA)
+{
+    struct disagg_dma_entry *entry;
+
+    spin_lock(&ctx.lock);
+
+    entry = disagg_find_entry(proxyDMA, size);
+
+    if (entry == NULL) {
+	pr_err("disagg_dma_free_attrs: cannot free non-existent dma buffer\n");
+	goto error;
+    }
+
+    rb_erase(&entry->node, &ctx.entry_root);
+    kfree(entry);
+
+    add_region_to_free_list(proxyDMA, size); 
+
+    spin_unlock(&ctx.lock);
+
+    return;
+
+error:
+    spin_unlock(&ctx.lock);
+}
+EXPORT_SYMBOL(disagg_dma_free_attrs);
 
 bool disagg_test_check_dma_values(size_t nodes, size_t idx, size_t size_at_idx) {
     if (list_count_nodes(&ctx.free_list) != nodes) {

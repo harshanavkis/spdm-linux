@@ -563,6 +563,9 @@ void *dma_alloc_attrs(struct device *dev, size_t size, dma_addr_t *dma_handle,
 	if (WARN_ON_ONCE(flag & __GFP_COMP))
 		return NULL;
 
+	if (unlikely(disagg_is_dev(dev)))
+		return disagg_dma_alloc_attrs(dev, size, dma_handle);
+
 	if (dma_alloc_from_dev_coherent(dev, size, dma_handle, &cpu_addr))
 		return cpu_addr;
 
@@ -585,6 +588,11 @@ void dma_free_attrs(struct device *dev, size_t size, void *cpu_addr,
 		dma_addr_t dma_handle, unsigned long attrs)
 {
 	const struct dma_map_ops *ops = get_dma_ops(dev);
+
+	if (unlikely(disagg_is_dev(dev))) {
+		disagg_dma_free_attrs(dev, size, cpu_addr, dma_handle);
+		return;
+	}
 
 	if (dma_release_from_dev_coherent(dev, get_order(size), cpu_addr))
 		return;
