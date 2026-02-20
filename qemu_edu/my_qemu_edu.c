@@ -163,6 +163,8 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 				writeq(SIZE, mmio + DMA_LEN_REG);
 				writeq(DMA_CMD, mmio + DMA_CMD_REG);
 				while(!(readq(mmio + DMA_STATUS_REG) & 0x1)) {}
+
+				dma_free_coherent(&(dev->dev), SIZE, actual, dma_handle);
 			}
 
 			{
@@ -186,6 +188,8 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 				writeq(SIZE, mmio + DMA_LEN_REG);
 				writeq(DMA_CMD, mmio + DMA_CMD_REG);
 				while(!(readq(mmio + DMA_STATUS_REG) & 0x1)) {}
+
+				dma_free_coherent(&(dev->dev), SIZE, actual, dma_handle);
 			}
 
 			{
@@ -209,6 +213,8 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 				writeq(SIZE, mmio + DMA_LEN_REG);
 				writeq(DMA_CMD + DMA_FROM_DEV, mmio + DMA_CMD_REG);
 				while(!(readq(mmio + DMA_STATUS_REG) & 0x1)) {}
+
+				dma_free_coherent(&(dev->dev), SIZE, actual, dma_handle);
 			}
 
 		}
