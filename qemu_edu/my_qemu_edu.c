@@ -124,6 +124,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 			if (readq(mmio + DMA_SRC_ADDR_REG) != val_src_addr) {
 				pr_info("src addr Value does not match! Expected: %llx, got : %llx\n", val_src_addr, readq(mmio + DMA_SRC_ADDR_REG));
+				return 0;
 			}
 
 			// Test dst addr register
@@ -132,6 +133,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 			if (readq(mmio + DMA_DST_ADDR_REG) != val_dst_addr) {
 				pr_info("dst addr Value does not match! Expected: %llx, got : %llx\n", val_dst_addr, readq(mmio + DMA_DST_ADDR_REG));
+				return 0;
 			}
 
 			// Test len register
@@ -140,6 +142,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 			if (readq(mmio + DMA_LEN_REG) != val_len) {
 				pr_info("Len Value does not match! Expected: %llx, got : %llx\n", val_len, readq(mmio + DMA_LEN_REG));
+				return 0;
 			}
 
 			{

@@ -136,6 +136,23 @@ size_t ivshmem_write_nonblocking(void *buf, size_t count, loff_t offset)
 }
 EXPORT_SYMBOL(ivshmem_write_nonblocking);
 
+/* To be deleted */
+ssize_t ivshmem_read(void *buf, size_t count, loff_t offset)
+{
+    if (!ivs_dev_global || !ivs_dev_global->shmem)
+        return -ENODEV;
+
+    wait_for_read_doorbell_set();
+
+    memcpy(buf, ivs_dev_global->shmem + offset, count);
+
+    writeb(0, ivs_dev_global->shmem + READ_DOORBELL_OFFSET);
+
+    return count;
+}
+EXPORT_SYMBOL(ivshmem_read);
+/**/
+
 ssize_t ivshmem_mmio_region_read(void *buf, size_t count)
 {
     if (!ivs_dev_global || !ivs_dev_global->shmem)
