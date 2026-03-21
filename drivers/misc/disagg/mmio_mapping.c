@@ -23,8 +23,6 @@ void disagg_ioremap_lookup_init(void)
 	spin_lock_init(&disagg_ioremap_lookup.lock);
 }
 
-/*** Moved from arch/x86/mm/ioremap.c ***/
-
 void disagg_register_ioremap(unsigned long virt_addr, phys_addr_t phys_addr, size_t size)
 {
 	struct disagg_dev_ioremap_entry *entry = kmalloc(sizeof(*entry), GFP_KERNEL);
@@ -124,23 +122,6 @@ void disagg_dev_mark_page_not_present(unsigned long start_addr, size_t size)
 		}
 	}
 }
-
-/*
- * Gives information about bar physical address to the remote device
- */
-/*
-static void disagg_provide_physical_address(uint64_t bar_nr, uint64_t phys_addr)
-{
-    if (ivshmem_write_nonblocking(&phys_addr, sizeof(phys_addr), OFFSET_BAR_PHYS_ADDR) != sizeof(phys_addr)) {
-	pr_info("write of physical address failed\n");
-    }
-}
-*/
-
-/****************************************/
-
-
-/*** Moved from arch/x86/mm/fault.c ***/
 
 bool disagg_is_tracked_mmio(unsigned long addr)
 {
@@ -306,7 +287,6 @@ disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, uns
 		WARN_ONCE(1, "Unknown insn_decode_mmio() decode value?");
 		pr_info("disagg_mmio_fault_handler switch mmio: -EINVAL\n");
 		return;
-		// return -EINVAL;
 	}
 
 	if (mmio_read(size, address, &val) != 0)
@@ -364,6 +344,4 @@ disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, uns
 	pr_info("opcode: 0x%x, 0x%x, 0x%x, 0x%x\n", insn.opcode.bytes[0], insn.opcode.bytes[1], insn.opcode.bytes[2], insn.opcode.bytes[3]);
 #endif
 }
-
-/**************************************/
 

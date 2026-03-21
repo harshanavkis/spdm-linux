@@ -10,9 +10,8 @@ static struct mmio_message *msg;
 int mmio_read(u64 size, u64 addr, unsigned long *val)
 {
 	u64 offset = disagg_ioremap_virt_to_offset(addr);
-	char data[9];
+	char data[8];
 
-	//pr_info("mmio_read: Address: %llx\n", addr);
 #ifdef CONFIG_DISAGG_DEBUG_MMIO
 	pr_info("mmio_read: Address: %llx\n", addr);
 #endif
@@ -21,15 +20,10 @@ int mmio_read(u64 size, u64 addr, unsigned long *val)
 	msg->address = offset;
 	msg->length = size;
 
-	// First byte of buf is reserved for unencrypted OP_TYPE
-	msg->op = DISAGG_DEV_OP_READ;
-
 	ivshmem_mmio_region_write(msg, (sizeof(*msg) - sizeof(msg->value)));
 
-	//ivshmem_mmio_region_read(data, sizeof(msg->value) + 1);
 	ivshmem_read(data, sizeof(msg->value), 16);
 
-	//memcpy(val, data + 1, sizeof(msg->value));
 	memcpy(val, data, sizeof(msg->value));
 
 	return 0;
@@ -47,9 +41,6 @@ int mmio_write(u64 size, u64 addr, unsigned long val)
 	msg->address = offset;
 	msg->length = size;
 	msg->value = val;
-
-	// First byte of buf is reserved for unencrypted OP_TYPE
-	msg->op = DISAGG_DEV_OP_WRITE;
 
 	ivshmem_mmio_region_write(msg, sizeof(*msg));
 

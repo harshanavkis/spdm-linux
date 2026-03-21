@@ -8,12 +8,6 @@
 
 static struct disagg_dma_data ctx;
 
-#ifdef HELLO //CONFIG_DISAGG_DEBUG_DMA_SEC
-static void my_print_hexdump(const char *prefix, const void *buf, size_t len) {
-    print_hex_dump(KERN_INFO, prefix, DUMP_PREFIX_NONE, 32, 1, buf, len, false);
-}
-#endif
-
 static void *proxyDMA_to_vmShmem(u64 proxyDMA) {
     if (ctx.proxyDMA_start > (u64) ctx.vmShmem_start)
 	return (void *) proxyDMA - ((void *)ctx.proxyDMA_start - ctx.vmShmem_start);

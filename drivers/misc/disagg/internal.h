@@ -26,10 +26,9 @@ struct disagg_dev_mmio_range {
 };
 
 struct mmio_message {
-	u8 op;
 
 	/* 
-	 * Operation type (OP_READ or OP_WRITE)
+	 * Operation type (DISAGG_DEV_OP_READ or DISAGG_DEV_OP_WRITE)
 	 */
 	u8 operation;
 

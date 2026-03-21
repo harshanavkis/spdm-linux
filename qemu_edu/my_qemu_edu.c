@@ -174,7 +174,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 				// Do a bigger H2D Dma transfer
 				dev_info(&(dev->dev), "DMA Test 2\n");
 				dma_addr_t dma_handle;
-				enum { SIZE = 2 << 17 };
+				enum { SIZE = 2 << 10 };
 				void *actual;
 
 
