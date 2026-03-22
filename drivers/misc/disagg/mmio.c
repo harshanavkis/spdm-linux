@@ -1,0 +1,64 @@
+#include <crypto/aead.h>
+#include <linux/scatterlist.h>
+
+#include <misc/qemu_ivshmem.h>
+
+#include "internal.h"
+
+static struct mmio_message *msg;
+
+int mmio_read(u64 size, u64 addr, unsigned long *val)
+{
+	u64 offset = disagg_ioremap_virt_to_offset(addr);
+	char data[8];
+
+#ifdef CONFIG_DISAGG_DEBUG_MMIO
+	pr_info("mmio_read: Address: %llx\n", addr);
+#endif
+
+	msg->operation = DISAGG_DEV_OP_READ;
+	msg->address = offset;
+	msg->length = size;
+
+	ivshmem_mmio_region_write(msg, (sizeof(*msg) - sizeof(msg->value)));
+
+	ivshmem_read(data, sizeof(msg->value), 16);
+
+	memcpy(val, data, sizeof(msg->value));
+
+	return 0;
+}
+
+int mmio_write(u64 size, u64 addr, unsigned long val)
+{
+	u64 offset = disagg_ioremap_virt_to_offset(addr);
+
+#ifdef CONFIG_DISAGG_DEBUG_MMIO
+	pr_info("mmio_write: Address: %llx\n", addr);
+#endif
+
+	msg->operation = DISAGG_DEV_OP_WRITE;
+	msg->address = offset;
+	msg->length = size;
+	msg->value = val;
+
+	ivshmem_mmio_region_write(msg, sizeof(*msg));
+
+	return 0;
+}
+
+
+int disagg_init_mmio(u8 *key, int keylen)
+{
+	// Alloc message structure object
+	msg = kmalloc(sizeof(*msg), GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
+	return 0;
+}
+
+void disagg_exit_mmio(void)
+{
+	kfree(msg);
+}
+

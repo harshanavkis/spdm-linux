@@ -32,59 +32,6 @@
 #include <linux/memremap.h>
 #include <linux/slab.h>
 
-#include <linux/rbtree.h>
-
-/*
- * Remote device MMIO tracking structures
-*/
-typedef struct disagg_dev_mmio_tracker {
-    struct rb_root root;
-    spinlock_t lock;
-} disagg_dev_mmio_tracker;
-
-typedef struct disagg_dev_mmio_range {
-    struct rb_node node;
-    unsigned long start;
-    unsigned long end;
-} disagg_dev_mmio_range;
-
-extern disagg_dev_mmio_tracker disagg_mmio_tracker;
-
-bool is_tracked_mmio(unsigned long addr);
-
-struct guest_message_header
-{
-    uint8_t operation; /**< Operation type (OP_READ or OP_WRITE) */
-    uint64_t address;  /**< Memory address for the operation */
-    uint32_t length;   /**< Length of data to read or write */
-} __attribute__((packed));
-
-typedef struct disagg_dev_ioremap_lookup {
-    struct rb_root root;
-    spinlock_t lock;
-} disagg_dev_ioremap_lookup;
-
-extern struct disagg_dev_ioremap_lookup disagg_ioremap_lookup;
-
-typedef struct disagg_dev_ioremap_entry {
-    unsigned long virt_addr;
-    phys_addr_t phys_addr;
-    size_t size;
-    struct rb_node node;
-} disagg_dev_ioremap_entry;
-
-void disagg_register_ioremap(unsigned long virt_addr, phys_addr_t phys_addr, size_t size);
-
-phys_addr_t disagg_ioremap_virt_to_phys(unsigned long virt_addr);
-
-extern struct guest_message_header dev_access_header;
-
-void disagg_mmio_fault_handler(struct pt_regs *regs, unsigned long hw_error_code, unsigned long address);
-
-#define DISAGG_DEV_OP_READ 1
-#define DISAGG_DEV_OP_WRITE 2
-/****************************************/
-
 struct mempolicy;
 struct anon_vma;
 struct anon_vma_chain;

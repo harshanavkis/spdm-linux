@@ -72,3 +72,4 @@ obj-$(CONFIG_NSM)		+= nsm.o
 obj-$(CONFIG_MARVELL_CN10K_DPI)	+= mrvl_cn10k_dpi.o
 obj-$(CONFIG_QEMU_IVSHMEM) += qemu_ivshmem.o
 obj-y				+= keba/
+obj-y				+= disagg/

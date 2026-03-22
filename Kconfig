@@ -5,6 +5,19 @@
 #
 mainmenu "Linux/$(ARCH) $(KERNELVERSION) Kernel Configuration"
 
+config DISAGG_DEBUG_MMIO_SEC
+	tristate "DISAGG: debug messages for mmio crypto"
+	help
+	  Adds debugging messages for the secure MMIO communication
+
+config DISAGG_DEBUG_MMIO
+	tristate "DISAGG: debug message for mmio communication"
+
+config DISAGG_DEBUG_DMA_SEC
+	tristate "DISAGG: deubgg messages for dma communication"
+
+
+
 source "scripts/Kconfig.include"
 
 source "init/Kconfig"
