@@ -25,6 +25,7 @@
 #define DMA_LEN_REG          0x18
 #define DMA_STATUS_REG       0x20
 #define START_COMPUTATION_REG 0x28
+#define CYCLES_PER_COMPUTATION_REG 0x30
 
 /* DMA constants */
 #define DMA_CMD      0x1
@@ -203,11 +204,11 @@ static void run_dma_benchmarks(struct pci_dev *dev)
 		512 * 1024,     /* 512 KiB */
 		1024 * 1024,    /*   1 MiB */
 	};
-	ktime_t start, end;
-	u64 elapsed_ns;
+	ktime_t start, mmio_done, end;
+	u64 elapsed_ns, mmio_done_ns;
 	int i, run;
 
-	pr_info("DMA_BENCH_CSV: data_size,operation,time_ns,run_id,throughput_gibps\n");
+	pr_info("DMA_BENCH_CSV: data_size,operation,total_time,mmio_done_ns,run_id,throughput_gibps\n");
 
 	/* ---- ALL H2D first ---- */
 	for (i = 0; i < ARRAY_SIZE(dma_sizes); i++) {
@@ -233,6 +234,7 @@ static void run_dma_benchmarks(struct pci_dev *dev)
 
 			writeq(size, mmio + DMA_LEN_REG);
 			writeq(DMA_CMD, mmio + DMA_CMD_REG);
+			mmio_done = ktime_get();
 
 			/* Poll for completion */
 			while (!(readq(mmio + DMA_STATUS_REG) & 0x1))
@@ -243,16 +245,15 @@ static void run_dma_benchmarks(struct pci_dev *dev)
 			/* Clear status after polling */
 			writeq(0, mmio + DMA_STATUS_REG);
 
-
-
 			elapsed_ns = (u64)ktime_to_ns(end) - (u64)ktime_to_ns(start);
+			mmio_done_ns = (u64)ktime_to_ns(mmio_done) - (u64)ktime_to_ns(start);
 			{
 				/* throughput = size / elapsed_s in GiB/s
 				 * = size * 1e9 / (elapsed_ns * 2^30) */
 				u64 tp_x1000 = (u64)size * 1000000000ULL * 1000ULL
 					/ (elapsed_ns * 1073741824ULL);
-				pr_info("DMA_BENCH_CSV: %zu,h2d,%llu,%d,%llu.%03llu\n",
-					size, elapsed_ns, run,
+				pr_info("DMA_BENCH_CSV: %zu,h2d,%llu,%llu,%d,%llu.%03llu\n",
+					size, elapsed_ns, mmio_done_ns, run,
 					tp_x1000 / 1000, tp_x1000 % 1000);
 			}
 		}
@@ -283,6 +284,7 @@ static void run_dma_benchmarks(struct pci_dev *dev)
 
 			writeq(size, mmio + DMA_LEN_REG);
 			writeq(DMA_CMD | DMA_FROM_DEV, mmio + DMA_CMD_REG);
+			mmio_done = ktime_get();
 
 			/* Poll for completion */
 			while (!(readq(mmio + DMA_STATUS_REG) & 0x1))
@@ -294,11 +296,12 @@ static void run_dma_benchmarks(struct pci_dev *dev)
 			writeq(0, mmio + DMA_STATUS_REG);
 
 			elapsed_ns = (u64)ktime_to_ns(end) - (u64)ktime_to_ns(start);
+			mmio_done_ns = (u64)ktime_to_ns(mmio_done) - (u64)ktime_to_ns(start);
 			{
 				u64 tp_x1000 = (u64)size * 1000000000ULL * 1000ULL
 					/ (elapsed_ns * 1073741824ULL);
-				pr_info("DMA_BENCH_CSV: %zu,d2h,%llu,%d,%llu.%03llu\n",
-					size, elapsed_ns, run,
+				pr_info("DMA_BENCH_CSV: %zu,d2h,%llu,%llu,%d,%llu.%03llu\n",
+					size, elapsed_ns, mmio_done_ns, run,
 					tp_x1000 / 1000, tp_x1000 % 1000);
 			}
 		}
@@ -308,6 +311,77 @@ static void run_dma_benchmarks(struct pci_dev *dev)
 
 	pr_info("DMA_BENCH_CSV: dma benchmark complete, %d total measurements\n",
 		(int)ARRAY_SIZE(dma_sizes) * 2 * NUM_RUNS);
+}
+
+/*
+ * ============================================================
+ * Computation Benchmark
+ *
+ * Measures time for hardware computation at various cycle counts.
+ * Uses:
+ *   CYCLES_PER_COMPUTATION_REG (0x30) - set cycles
+ *   START_COMPUTATION_REG      (0x28) - start (write 1 to bit 0)
+ *   DMA_STATUS_REG             (0x20) - poll bit 1 (0x2) for completion
+ * ============================================================
+ */
+static void run_comp_benchmarks(struct pci_dev *dev)
+{
+	static const size_t data_sizes[] = {
+		4 * 1024,       /*   4 KiB */
+		8 * 1024,       /*   8 KiB */
+		16 * 1024,      /*  16 KiB */
+		32 * 1024,      /*  32 KiB */
+		64 * 1024,      /*  64 KiB */
+		128 * 1024,     /* 128 KiB */
+		256 * 1024,     /* 256 KiB */
+		512 * 1024,     /* 512 KiB */
+		1024 * 1024,    /*   1 MiB */
+	};
+	static const u64 comp_cycles[] = {
+		100,
+		1000,
+		10000,
+		100000,
+		1000000,
+	};
+	ktime_t start, mmio_done, end;
+	u64 total_time, mmio_done_ns;
+	int i, j, run;
+
+	pr_info("COMP_BENCH_CSV: data_size,cycles,operation,total_time,mmio_done_ns,run_id\n");
+
+	for (i = 0; i < ARRAY_SIZE(data_sizes); i++) {
+		size_t size = data_sizes[i];
+		for (j = 0; j < ARRAY_SIZE(comp_cycles); j++) {
+			u64 cycles = comp_cycles[j];
+
+			for (run = 0; run < NUM_RUNS; run++) {
+				start = ktime_get();
+
+				/* Provide cycle count and start computation */
+				writeq(cycles, mmio + CYCLES_PER_COMPUTATION_REG);
+				writeq(1, mmio + START_COMPUTATION_REG);
+				mmio_done = ktime_get();
+
+				/* Poll for completion (bit 1 of DMA_STATUS_REG) */
+				while (!(readq(mmio + DMA_STATUS_REG) & 0x2))
+					;
+
+				end = ktime_get();
+
+				/* Clear status register (bits are latched, usually cleared by 0 write) */
+				writeq(0, mmio + DMA_STATUS_REG);
+
+				total_time = (u64)ktime_to_ns(end) - (u64)ktime_to_ns(start);
+				mmio_done_ns = (u64)ktime_to_ns(mmio_done) - (u64)ktime_to_ns(start);
+
+				pr_info("COMP_BENCH_CSV: %zu,%llu,comp,%llu,%llu,%d\n",
+					size, cycles, total_time, mmio_done_ns, run);
+			}
+		}
+	}
+
+	pr_info("COMP_BENCH_CSV: computation benchmark complete\n");
 }
 
 
@@ -353,6 +427,7 @@ static int my_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	/* Run benchmarks */
 	run_mmio_benchmarks(dev);
 	run_dma_benchmarks(dev);
+	run_comp_benchmarks(dev);
 
 	return 0;
 
