@@ -1,7 +1,16 @@
 #ifndef _MISC_QEMU_IVSHMEM_H_
 #define _MISC_QEMU_IVSHMEM_H_
 
-#define SHMEM_SIZE (1 << 21)  // 2 MB, adjust as needed
+/*
+ * Sized to fit JIGSAW_TRACE_MAX_BYTES (~14 MiB at present, see qemu_edu/
+ * traces.h) plus the 4 KiB reserved at DMA_REGION_OFFSET. The disagg DMA
+ * allocator (drivers/misc/disagg/dma.c) carves DMA_SIZE out of this pool,
+ * so SHMEM_SIZE caps the largest dma_alloc_coherent the qemu_edu driver
+ * can satisfy. Must match the QEMU ivshmem -object size in
+ * jigsaw-overall/scripts/run/vm.sh and the SHMEM_SIZE macro in every
+ * Coyote sw/ shmem.hpp.
+ */
+#define SHMEM_SIZE (1 << 24)  // 16 MiB
 #define READ_DOORBELL_OFFSET 0
 #define WRITE_DOORBELL_OFFSET 1
 #define DOORBELL_SIZE 1  // 1 byte for each doorbell
