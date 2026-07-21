@@ -87,6 +87,17 @@ struct trace_app {
 #define NUM_RUNS 10
 #define TRACE_N_RUNS 5
 
+/* Divide every trace bundle's compute cycles by this factor to model a
+ * faster accelerator (the traces were captured on Vortex-on-FPGA at
+ * 250 MHz; a Vortex-family ASIC clocks ~1.5 GHz, i.e. ~6x — see
+ * arXiv:2512.00053). Scaled cycles are what gets programmed AND what the
+ * TRACE_EVENT/TRACE_SUMMARY lines report, so logs stay self-consistent.
+ * The sweep is two points: default (1, as-captured) and
+ *   insmod my_qemu_edu.ko cycles_scale=6 */
+static uint cycles_scale = 1;
+module_param(cycles_scale, uint, 0444);
+MODULE_PARM_DESC(cycles_scale, "Divide trace compute cycles by this factor");
+
 static int major;
 static struct pci_dev *pdev;
 static void __iomem *mmio;
@@ -591,16 +602,17 @@ static void replay_one(struct pci_dev *dev, const char *set_label,
 			break;
 		}
 
-		case TRACE_BUNDLE:
+		case TRACE_BUNDLE: {
+			u64 cycles = ev->cycles / (cycles_scale ? cycles_scale : 1);
 			h2d = clamp_dma(ev->h2d_size, TRACE_DMA_CAPACITY);
 			d2h = clamp_dma(ev->d2h_size, TRACE_DMA_CAPACITY);
 			pr_info("TRACE_EVENT: %s,%s,%d,%zu,%u,%llu,%llu,%llu\n",
 				set_label, app->name, run_idx, i, ev->kind,
 				(unsigned long long)h2d,
 				(unsigned long long)d2h,
-				(unsigned long long)ev->cycles);
+				(unsigned long long)cycles);
 
-			writeq(ev->cycles, mmio + CYCLES_PER_COMPUTATION_REG);
+			writeq(cycles, mmio + CYCLES_PER_COMPUTATION_REG);
 
 			start = ktime_get();
 			writeq((u64)trace_dma_handle, mmio + DMA_SRC_ADDR_REG);
@@ -614,6 +626,7 @@ static void replay_one(struct pci_dev *dev, const char *set_label,
 			end = ktime_get();
 			writeq(0, mmio + DMA_STATUS_REG);
 			break;
+		}
 
 		default:
 			pr_warn("TRACE_CSV: %s run=%d skipping unknown kind %u at idx %zu\n",
@@ -639,7 +652,7 @@ static void replay_one(struct pci_dev *dev, const char *set_label,
 			agg_bundle_ns += total_ns;
 			agg_h2d_bytes += ev->h2d_size;
 			agg_d2h_bytes += ev->d2h_size;
-			agg_cycles    += ev->cycles;
+			agg_cycles    += ev->cycles / (cycles_scale ? cycles_scale : 1);
 			break;
 		}
 	}
@@ -728,6 +741,8 @@ static void run_trace_replay(struct pci_dev *dev)
 		return;
 	}
 	memset(buf, 0xAB, TRACE_MEM_BYTES);
+
+	pr_info("TRACE_CSV: cycles_scale=%u\n", cycles_scale);
 
 	/* CSV header (column names match the per-event/per-summary lines). */
 	pr_info("TRACE_EVENT: set,app,run,event,kind,h2d_bytes,d2h_bytes,cycles\n");
